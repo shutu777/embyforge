@@ -9,6 +9,7 @@ const router = useRouter()
 const snackbar = useSnackbar()
 const username = ref('管理员')
 const avatarUrl = ref('')
+const appVersion = __APP_VERSION__
 
 // 获取用户信息
 async function fetchProfile() {
@@ -105,7 +106,7 @@ function handleLogout() {
                 size="22"
               />
             </template>
-            <VListItemTitle>v1.0.0</VListItemTitle>
+            <VListItemTitle>v{{ appVersion }}</VListItemTitle>
           </VListItem>
 
           <VDivider class="my-2" />
