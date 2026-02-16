@@ -1,0 +1,63 @@
+// 全局样式优化
+@import './enhancements.scss';
+
+// 卡片悬浮效果
+@import './card-hover-effect.scss';
+
+// 禁用导航菜单的所有 tooltip
+.layout-vertical-nav,
+.layout-vertical-nav * {
+  // 移除 title 属性的默认提示
+  &[title] {
+    &:hover::after {
+      content: none !important;
+      display: none !important;
+    }
+  }
+}
+
+// 滚动条美化
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(var(--v-theme-on-surface), 0.2);
+  border-radius: 4px;
+  transition: background 0.2s ease;
+  
+  &:hover {
+    background: rgba(var(--v-theme-on-surface), 0.3);
+  }
+}
+
+// 工具提示毛玻璃效果
+.v-tooltip > .v-overlay__content {
+  backdrop-filter: blur(10px);
+  background: rgba(var(--v-theme-surface), 0.9) !important;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+// 平滑过渡
+* {
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+// 响应式优化
+@media (max-width: 600px) {
+  .v-card {
+    margin: 8px !important;
+  }
+  
+  .stats-card-modern {
+    .v-card-text {
+      padding: 16px !important;
+    }
+  }
+}

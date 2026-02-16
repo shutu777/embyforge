@@ -1,0 +1,228 @@
+// 视觉增强效果
+
+// 卡片悬停效果（排除带 data-no-hover 属性的卡片）
+.v-card:not([data-no-hover]) {
+  transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+  position: relative;
+  overflow: hidden;
+  
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+    transition: left 0.5s ease;
+    pointer-events: none;
+  }
+  
+  &:hover {
+    transform: translateY(-8px) scale(1.02);
+    box-shadow: 0 16px 48px rgba(var(--v-shadow-key-umbra-color), 0.2) !important;
+    
+    &::before {
+      left: 100%;
+    }
+  }
+}
+
+// 深色模式下的卡片悬停（排除 data-no-hover）
+.v-theme--dark .v-card:not([data-no-hover]):hover {
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4) !important;
+}
+
+// 按钮增强
+.v-btn {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  
+  &:hover:not(:disabled) {
+    transform: translateY(-2px);
+  }
+  
+  &:active:not(:disabled) {
+    transform: translateY(0);
+  }
+}
+
+// 输入框聚焦效果
+.v-field--focused {
+  animation: input-glow 0.3s ease;
+}
+
+@keyframes input-glow {
+  0% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2px);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+// 表格行悬停（不使用 position: relative，避免破坏 table-layout: fixed）
+.v-table tbody tr {
+  transition: background 0.2s ease;
+
+  &:hover {
+    background: rgba(var(--v-theme-primary), 0.05) !important;
+    box-shadow: inset 3px 0 0 0 rgb(var(--v-theme-primary));
+  }
+}
+
+// 辅助样式类
+
+// 毛玻璃效果
+.glass-effect {
+  backdrop-filter: blur(10px);
+  background: rgba(var(--v-theme-surface), 0.8) !important;
+}
+
+// 渐变边框
+.gradient-border {
+  position: relative;
+  border: none !important;
+  
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 2px;
+    background: linear-gradient(135deg, rgb(var(--v-theme-primary)), rgb(var(--v-theme-secondary)));
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+  }
+}
+
+// 柔和阴影
+.smooth-shadow {
+  box-shadow: 
+    0 2px 4px rgba(var(--v-shadow-key-umbra-color), 0.08),
+    0 4px 8px rgba(var(--v-shadow-key-umbra-color), 0.12),
+    0 8px 16px rgba(var(--v-shadow-key-umbra-color), 0.16) !important;
+}
+
+// 强力上升悬浮
+.card-hover-lift {
+  transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+  
+  &:hover {
+    transform: translateY(-12px) scale(1.03) !important;
+    box-shadow: 0 20px 60px rgba(var(--v-shadow-key-umbra-color), 0.25) !important;
+  }
+}
+
+// 发光悬浮
+.card-hover-glow {
+  transition: all 0.3s ease !important;
+  
+  &:hover {
+    box-shadow: 
+      0 0 20px rgba(var(--v-theme-primary), 0.3),
+      0 8px 32px rgba(var(--v-shadow-key-umbra-color), 0.2) !important;
+  }
+}
+
+// 3D 倾斜悬浮
+.card-hover-3d {
+  transition: all 0.3s ease !important;
+  transform-style: preserve-3d;
+  
+  &:hover {
+    transform: perspective(1000px) rotateX(5deg) rotateY(-5deg) translateY(-8px) !important;
+  }
+}
+
+// 骨架屏加载动画
+.skeleton-loader {
+  background: linear-gradient(
+    90deg,
+    rgba(var(--v-theme-on-surface), 0.08) 25%,
+    rgba(var(--v-theme-on-surface), 0.12) 50%,
+    rgba(var(--v-theme-on-surface), 0.08) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-loading 1.5s ease-in-out infinite;
+  border-radius: 8px;
+}
+
+@keyframes skeleton-loading {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+// 统计卡片现代化样式
+.stats-card-modern {
+  background: linear-gradient(135deg, rgba(var(--v-theme-primary), 0.05), rgba(var(--v-theme-primary), 0.02)) !important;
+  border: 1px solid rgba(var(--v-theme-primary), 0.1);
+  transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+  
+  &:hover {
+    transform: translateY(-12px) scale(1.03);
+    box-shadow: 0 20px 60px rgba(var(--v-shadow-key-umbra-color), 0.25) !important;
+    border-color: rgba(var(--v-theme-primary), 0.3);
+    
+    .stats-icon-container {
+      transform: rotate(15deg) scale(1.15);
+    }
+  }
+  
+  .stats-icon-container {
+    transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    background: radial-gradient(circle, rgba(var(--v-theme-primary), 0.15), transparent);
+  }
+}
+
+// 图表容器现代化样式
+.chart-container-modern {
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  transition: all 0.3s ease !important;
+  
+  &:hover {
+    transform: translateY(-8px) scale(1.01);
+    box-shadow: 0 12px 40px rgba(var(--v-shadow-key-umbra-color), 0.15) !important;
+  }
+  
+  .chart-divider {
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(var(--v-border-color), var(--v-border-opacity)),
+      transparent
+    );
+  }
+}
+
+// 导航项增强
+.nav-item-enhanced {
+  position: relative;
+  transition: all 0.2s ease;
+  
+  &::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%) scaleY(0);
+    width: 4px;
+    height: 70%;
+    background: rgb(var(--v-theme-primary));
+    border-radius: 0 4px 4px 0;
+    transition: transform 0.2s ease;
+  }
+  
+  &:hover::before,
+  &.active::before {
+    transform: translateY(-50%) scaleY(1);
+  }
+}

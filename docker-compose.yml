@@ -1,0 +1,15 @@
+version: "3.8"
+
+services:
+  embyforge:
+    image: shutu736/embyforge:latest
+    container_name: embyforge
+    restart: always
+    ports:
+      - "8880:80"
+    volumes:
+      - ./data:/data
+    
+volumes:
+  embyforge-data:
+    driver: local

@@ -1,0 +1,41 @@
+// 卡片悬浮放大效果 - 排除 content-card 大卡片
+.v-theme--light .v-card:not([data-no-hover]),
+.v-theme--dark .v-card:not([data-no-hover]) {
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), 
+              box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  will-change: transform;
+  cursor: pointer;
+  
+  &:hover {
+    transform: scale(1.02) translateY(-4px) !important;
+    box-shadow: 0 8px 24px 0 rgba(var(--v-shadow-key-umbra-color), 0.18) !important;
+    z-index: 1;
+  }
+}
+
+// 确保所有卡片都有悬浮效果（排除 content-card）
+.v-row .v-col .v-card:not([data-no-hover]),
+.match-height .v-card:not([data-no-hover]) {
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), 
+              box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  cursor: pointer;
+  
+  &:hover {
+    transform: scale(1.02) translateY(-4px) !important;
+    box-shadow: 0 8px 24px 0 rgba(var(--v-shadow-key-umbra-color), 0.18) !important;
+    z-index: 1;
+  }
+}
+
+// 大卡片禁用悬浮
+.v-card[data-no-hover] {
+  cursor: default !important;
+  will-change: auto !important;
+  transition: none !important;
+
+  &:hover {
+    transform: none !important;
+    box-shadow: none !important;
+    z-index: auto !important;
+  }
+}

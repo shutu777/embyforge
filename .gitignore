@@ -1,0 +1,50 @@
+# 依赖
+frontend/node_modules/
+
+# 构建产物
+frontend/dist/
+backend/server.exe
+backend/server
+
+# 数据目录
+backend/data/
+/data/
+
+# 调试文件
+backend/debug_*.json
+backend/cmd/debug_*/
+
+# 系统文件
+.DS_Store
+*.swp
+*.swo
+*~
+Thumbs.db
+
+# IDE
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# 环境变量
+.env
+.env.*
+!.env.example
+
+# 日志
+*.log
+
+# Kiro
+.kiro/
+
+# nul（Windows 空文件）
+nul
+
+# 多余的 lock 文件（只保留 package-lock.json）
+frontend/pnpm-lock.yaml
+frontend/yarn.lock
+
+# 属性测试失败数据
+**/testdata/rapid/

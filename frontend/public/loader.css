@@ -1,0 +1,89 @@
+body {
+  margin: 0;
+  /* 设置默认背景色，避免白屏 */
+  background-color: var(--initial-loader-bg, #F5F7FA);
+  transition: background-color 0.3s ease;
+}
+
+html {
+  overflow-x: hidden;
+  overflow-y: scroll;
+}
+
+#loading-bg {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--initial-loader-bg, #F5F7FA);
+  block-size: 100vh;
+  gap: 1rem 0;
+  inline-size: 100vw;
+  z-index: 9999;
+  /* 添加平滑过渡 */
+  transition: opacity 0.3s ease-out;
+}
+
+.loading {
+  position: relative;
+  box-sizing: border-box;
+  border: 3px solid transparent;
+  border-radius: 50%;
+  block-size: 55px;
+  inline-size: 55px;
+}
+
+.loading .effect-1,
+.loading .effect-2,
+.loading .effect-3 {
+  position: absolute;
+  box-sizing: border-box;
+  border: 3px solid transparent;
+  border-radius: 50%;
+  block-size: 100%;
+  border-inline-start: 3px solid var(--initial-loader-color, #eee);
+  inline-size: 100%;
+}
+
+.loading .effect-1 {
+  animation: rotate 1s ease infinite;
+}
+
+.loading .effect-2 {
+  animation: rotate-opacity 1s ease infinite 0.1s;
+}
+
+.loading .effect-3 {
+  animation: rotate-opacity 1s ease infinite 0.2s;
+}
+
+.loading .effects {
+  transition: all 0.3s ease;
+}
+
+@keyframes rotate {
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(1turn);
+  }
+}
+
+@keyframes rotate-opacity {
+  0% {
+    opacity: 0.1;
+    transform: rotate(0deg);
+  }
+
+  100% {
+    opacity: 1;
+    transform: rotate(1turn);
+  }
+}
