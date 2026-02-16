@@ -1,10 +1,10 @@
 # 阶段1：构建前端
 FROM node:20-alpine AS frontend-builder
 WORKDIR /app/frontend
-COPY frontend/package.json frontend/package-lock.json* frontend/yarn.lock* frontend/pnpm-lock.yaml* ./
-RUN npm install --legacy-peer-deps
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm install --legacy-peer-deps --ignore-scripts
 COPY frontend/ .
-RUN npm run build
+RUN npm run build:icons && npm run build
 
 # 阶段2：构建后端（纯 Go SQLite，无需 CGO）
 FROM golang:1.23-alpine AS backend-builder
