@@ -97,7 +97,7 @@ function handleLogout() {
           </VListItem>
 
           <!-- 版本信息 -->
-          <VListItem link href="https://github.com" target="_blank">
+          <VListItem link href="https://github.com/shutu777/embyforge" target="_blank">
             <template #prepend>
               <VIcon
                 class="me-2"
