@@ -64,6 +64,13 @@ const { t } = useI18n()
       to: '/episode-mapping',
     }"
   />
+  <VerticalNavLink
+    :item="{
+      title: t('menu.tmdbCache'),
+      icon: 'ri-database-2-line',
+      to: '/tmdb-cache',
+    }"
+  />
 
   <!-- 👉 系统管理 -->
   <VerticalNavSectionTitle

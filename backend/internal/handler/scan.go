@@ -743,16 +743,21 @@ func (h *ScanHandler) GetAnalysisStatus(c *gin.Context) {
 
 // EpisodeMappingGroup 按节目聚合的异常映射组
 type EpisodeMappingGroup struct {
-	EmbyItemID string                        `json:"emby_item_id"`
-	Name       string                        `json:"name"`
-	TmdbID     int                           `json:"tmdb_id"`
-	Seasons    []model.EpisodeMappingAnomaly `json:"seasons"`
+	EmbyItemID   string                        `json:"emby_item_id"`
+	Name         string                        `json:"name"`
+	TmdbID       int                           `json:"tmdb_id"`
+	SeasonCount  int                           `json:"season_count"` // 异常季数量
+	Seasons      []model.EpisodeMappingAnomaly `json:"seasons"`
 }
 
 // GetEpisodeMappingAnomalies 分页获取异常映射结果（按节目聚合）
+// 支持参数: page, pageSize, search(名称搜索), sort(排序字段), filter(single/multi)
 func (h *ScanHandler) GetEpisodeMappingAnomalies(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
+	search := c.DefaultQuery("search", "")
+	sortBy := c.DefaultQuery("sort", "season_count_desc") // 默认按异常季数量降序
+	filter := c.DefaultQuery("filter", "")                 // single / multi / 空
 
 	if page < 1 {
 		page = 1
@@ -761,55 +766,129 @@ func (h *ScanHandler) GetEpisodeMappingAnomalies(c *gin.Context) {
 		pageSize = 20
 	}
 
-	// 按 emby_item_id 分组计算总节目数
-	var total int64
-	h.DB.Model(&model.EpisodeMappingAnomaly{}).Distinct("emby_item_id").Count(&total)
+	// 构建基础查询
+	baseQuery := h.DB.Model(&model.EpisodeMappingAnomaly{})
 
-	// 分页获取当前页的节目 ID 列表（按名称排序）
-	var embyItemIDs []string
+	// 搜索条件
+	if search != "" {
+		baseQuery = baseQuery.Where("name LIKE ?", "%"+search+"%")
+	}
+
+	// 构建分组子查询（用于筛选和排序）
+	// 先获取每个 emby_item_id 的异常季数量
+	groupQuery := baseQuery.Session(&gorm.Session{NewDB: true}).
+		Model(&model.EpisodeMappingAnomaly{})
+	if search != "" {
+		groupQuery = groupQuery.Where("name LIKE ?", "%"+search+"%")
+	}
+
+	// 筛选条件
+	switch filter {
+	case "single":
+		// 只有1季异常的
+		groupQuery = groupQuery.Select("emby_item_id, COUNT(*) as season_count").
+			Group("emby_item_id").
+			Having("COUNT(*) = 1")
+	case "multi":
+		// 多季异常的
+		groupQuery = groupQuery.Select("emby_item_id, COUNT(*) as season_count").
+			Group("emby_item_id").
+			Having("COUNT(*) > 1")
+	default:
+		groupQuery = groupQuery.Select("emby_item_id, COUNT(*) as season_count").
+			Group("emby_item_id")
+	}
+
+	// 计算总数
+	type countResult struct {
+		Total int64
+	}
+	var totalCount int64
+	countQuery := h.DB.Table("(?) as sub", groupQuery).Count(&totalCount)
+	_ = countQuery
+
+	// 排序
+	var orderClause string
+	switch sortBy {
+	case "season_count_desc":
+		orderClause = "season_count DESC, MIN(name) ASC"
+	case "season_count_asc":
+		orderClause = "season_count ASC, MIN(name) ASC"
+	case "name_asc":
+		orderClause = "MIN(name) ASC"
+	case "name_desc":
+		orderClause = "MIN(name) DESC"
+	default:
+		orderClause = "season_count DESC, MIN(name) ASC"
+	}
+
+	// 分页获取节目 ID 列表
+	type groupRow struct {
+		EmbyItemID  string `gorm:"column:emby_item_id"`
+		SeasonCount int    `gorm:"column:season_count"`
+	}
+	var groupRows []groupRow
 	offset := (page - 1) * pageSize
-	h.DB.Model(&model.EpisodeMappingAnomaly{}).
-		Select("emby_item_id").
-		Group("emby_item_id").
-		Order("MIN(name) ASC").
+
+	idQuery := h.DB.Model(&model.EpisodeMappingAnomaly{})
+	if search != "" {
+		idQuery = idQuery.Where("name LIKE ?", "%"+search+"%")
+	}
+	idQuery = idQuery.Select("emby_item_id, COUNT(*) as season_count").
+		Group("emby_item_id")
+
+	switch filter {
+	case "single":
+		idQuery = idQuery.Having("COUNT(*) = 1")
+	case "multi":
+		idQuery = idQuery.Having("COUNT(*) > 1")
+	}
+
+	idQuery.Order(orderClause).
 		Offset(offset).Limit(pageSize).
-		Pluck("emby_item_id", &embyItemIDs)
+		Find(&groupRows)
+
+	embyItemIDs := make([]string, len(groupRows))
+	seasonCountMap := make(map[string]int)
+	for i, r := range groupRows {
+		embyItemIDs[i] = r.EmbyItemID
+		seasonCountMap[r.EmbyItemID] = r.SeasonCount
+	}
 
 	var groups []EpisodeMappingGroup
 	if len(embyItemIDs) > 0 {
-		// 获取这些节目的所有异常季数据，按季号排序
 		var anomalies []model.EpisodeMappingAnomaly
 		h.DB.Where("emby_item_id IN ?", embyItemIDs).
 			Order("season_number ASC").
 			Find(&anomalies)
 
-		// 按 emby_item_id 聚合
 		groupMap := make(map[string]*EpisodeMappingGroup)
-		groupOrder := make([]string, 0) // 保持顺序
 		for _, a := range anomalies {
 			g, exists := groupMap[a.EmbyItemID]
 			if !exists {
 				g = &EpisodeMappingGroup{
-					EmbyItemID: a.EmbyItemID,
-					Name:       a.Name,
-					TmdbID:     a.TmdbID,
-					Seasons:    []model.EpisodeMappingAnomaly{},
+					EmbyItemID:  a.EmbyItemID,
+					Name:        a.Name,
+					TmdbID:      a.TmdbID,
+					SeasonCount: seasonCountMap[a.EmbyItemID],
+					Seasons:     []model.EpisodeMappingAnomaly{},
 				}
 				groupMap[a.EmbyItemID] = g
-				groupOrder = append(groupOrder, a.EmbyItemID)
 			}
 			g.Seasons = append(g.Seasons, a)
 		}
 
-		// 按原始顺序输出
-		for _, id := range groupOrder {
-			groups = append(groups, *groupMap[id])
+		// 按 groupRows 的顺序输出（保持排序）
+		for _, r := range groupRows {
+			if g, ok := groupMap[r.EmbyItemID]; ok {
+				groups = append(groups, *g)
+			}
 		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"data":      groups,
-		"total":     total,
+		"total":     totalCount,
 		"page":      page,
 		"page_size": pageSize,
 	})

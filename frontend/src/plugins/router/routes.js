@@ -35,6 +35,11 @@ export const routes = [
         component: () => import('@/pages/episode-mapping.vue'),
       },
       {
+        path: 'tmdb-cache',
+        name: 'tmdb-cache',
+        component: () => import('@/pages/tmdb-cache.vue'),
+      },
+      {
         path: 'system-config',
         name: 'system-config',
         component: () => import('@/pages/system-config.vue'),

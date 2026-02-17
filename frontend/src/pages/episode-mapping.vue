@@ -1,15 +1,24 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import api from '@/utils/api'
 import { useSnackbar } from '@/composables/useSnackbar'
 
+const route = useRoute()
+const router = useRouter()
 const snackbar = useSnackbar()
 
-// 表格数据（按节目聚合）
+// 从 URL query 初始化状态
+const page = ref(Number(route.query.page) || 1)
+const pageSize = ref(20)
+const searchText = ref(route.query.search || '')
+const searchInput = ref(route.query.search || '')
+const sortBy = ref(route.query.sort || 'season_count_desc')
+const filterType = ref(route.query.filter || '')
+
+// 表格数据
 const groups = ref([])
 const total = ref(0)
-const page = ref(1)
-const pageSize = ref(20)
 
 // 缓存状态
 const cacheStatus = ref(null)
@@ -20,8 +29,6 @@ const analysisStatus = ref(null)
 const analyzing = ref(false)
 const loading = ref(false)
 const analyzeResult = ref(null)
-
-// TMDB API Key 未配置标记
 const tmdbNotConfigured = ref(false)
 
 // Emby 配置
@@ -43,6 +50,23 @@ const lastAnalyzedAt = computed(() => {
 const anomalyCount = computed(() => {
   return analysisStatus.value?.episode_mapping?.anomaly_count || 0
 })
+
+const sortOptions = [
+  { title: '异常季数 (多→少)', value: 'season_count_desc' },
+  { title: '异常季数 (少→多)', value: 'season_count_asc' },
+  { title: '名称 (A→Z)', value: 'name_asc' },
+  { title: '名称 (Z→A)', value: 'name_desc' },
+]
+
+// 同步状态到 URL query
+function syncQueryToUrl() {
+  const query = {}
+  if (page.value > 1) query.page = String(page.value)
+  if (searchText.value) query.search = searchText.value
+  if (sortBy.value && sortBy.value !== 'season_count_desc') query.sort = sortBy.value
+  if (filterType.value) query.filter = filterType.value
+  router.replace({ query })
+}
 
 function openInEmby(embyItemId) {
   if (!embyBaseUrl.value || !embyServerId.value) {
@@ -99,9 +123,15 @@ async function fetchAnalysisStatus() {
 async function fetchAnomalies() {
   loading.value = true
   try {
-    const { data } = await api.get('/scan/episode-mapping', {
-      params: { page: page.value, pageSize: pageSize.value },
-    })
+    const params = {
+      page: page.value,
+      pageSize: pageSize.value,
+      sort: sortBy.value,
+    }
+    if (searchText.value) params.search = searchText.value
+    if (filterType.value) params.filter = filterType.value
+
+    const { data } = await api.get('/scan/episode-mapping', { params })
     groups.value = data.data || []
     total.value = data.total || 0
   } catch (e) {
@@ -119,6 +149,7 @@ async function startAnalyze() {
     const { data } = await api.post('/analyze/episode-mapping')
     analyzeResult.value = { ...data.data, anomaly_show_count: data.anomaly_show_count }
     page.value = 1
+    syncQueryToUrl()
     await Promise.all([fetchAnomalies(), fetchAnalysisStatus()])
   } catch (e) {
     const msg = e.response?.data?.message || '分析失败'
@@ -134,8 +165,38 @@ async function startAnalyze() {
 
 function onPageChange(newPage) {
   page.value = newPage
+  syncQueryToUrl()
   fetchAnomalies()
 }
+
+function doSearch() {
+  searchText.value = searchInput.value.trim()
+  page.value = 1
+  syncQueryToUrl()
+  fetchAnomalies()
+}
+
+function clearSearch() {
+  searchInput.value = ''
+  searchText.value = ''
+  page.value = 1
+  syncQueryToUrl()
+  fetchAnomalies()
+}
+
+function setFilter(val) {
+  filterType.value = val
+  page.value = 1
+  syncQueryToUrl()
+  fetchAnomalies()
+}
+
+// 排序变化时重新加载
+watch(sortBy, () => {
+  page.value = 1
+  syncQueryToUrl()
+  fetchAnomalies()
+})
 
 onMounted(async () => {
   await fetchCacheStatus()
@@ -266,12 +327,69 @@ onMounted(async () => {
             </div>
           </div>
 
+          <!-- 搜索、排序、筛选工具栏 -->
+          <VRow class="mb-4" dense>
+            <VCol cols="12" sm="4">
+              <VTextField
+                v-model="searchInput"
+                placeholder="搜索节目名称..."
+                density="compact"
+                variant="outlined"
+                hide-details
+                prepend-inner-icon="ri-search-line"
+                clearable
+                @keyup.enter="doSearch"
+                @click:clear="clearSearch"
+              />
+            </VCol>
+            <VCol cols="12" sm="3">
+              <VSelect
+                v-model="sortBy"
+                :items="sortOptions"
+                item-title="title"
+                item-value="value"
+                density="compact"
+                variant="outlined"
+                hide-details
+                label="排序"
+              />
+            </VCol>
+            <VCol cols="12" sm="5">
+              <div class="d-flex align-center gap-2 h-100">
+                <VBtn
+                  :variant="filterType === '' ? 'flat' : 'outlined'"
+                  :color="filterType === '' ? 'primary' : 'default'"
+                  size="small"
+                  @click="setFilter('')"
+                >
+                  全部
+                </VBtn>
+                <VBtn
+                  :variant="filterType === 'multi' ? 'flat' : 'outlined'"
+                  :color="filterType === 'multi' ? 'primary' : 'default'"
+                  size="small"
+                  @click="setFilter('multi')"
+                >
+                  多季异常
+                </VBtn>
+                <VBtn
+                  :variant="filterType === 'single' ? 'flat' : 'outlined'"
+                  :color="filterType === 'single' ? 'primary' : 'default'"
+                  size="small"
+                  @click="setFilter('single')"
+                >
+                  单季异常
+                </VBtn>
+              </div>
+            </VCol>
+          </VRow>
+
           <div v-if="groups.length > 0">
             <VExpansionPanels variant="accordion">
               <VExpansionPanel v-for="group in groups" :key="group.emby_item_id">
                 <VExpansionPanelTitle>
                   <div class="d-flex align-center gap-2 flex-wrap">
-                    <VChip size="small" color="warning">{{ group.seasons.length }} 季异常</VChip>
+                    <VChip size="small" color="warning">{{ group.season_count }} 季异常</VChip>
                     <VChip size="x-small" color="info" variant="tonal">TMDB {{ group.tmdb_id }}</VChip>
                     <span class="text-body-2 font-weight-medium">{{ group.name }}</span>
                   </div>
@@ -318,7 +436,7 @@ onMounted(async () => {
           </div>
 
           <div v-else-if="!loading" class="text-center pa-4 text-body-2 text-medium-emphasis">
-            暂无数据，请点击"开始分析"按钮
+            {{ searchText || filterType ? '没有匹配的结果' : '暂无数据，请点击"开始分析"按钮' }}
           </div>
           <VProgressLinear v-if="loading" indeterminate class="mt-2" />
           <div v-if="total > pageSize" class="d-flex justify-center mt-4">

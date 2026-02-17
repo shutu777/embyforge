@@ -135,6 +135,7 @@ func main() {
 	profileHandler := handler.NewProfileHandler(db, filepath.Dir(cfg.DBPath))
 	systemConfigHandler := handler.NewSystemConfigHandler(db)
 	logsHandler := handler.NewLogsHandler(logBuffer)
+	tmdbCacheHandler := handler.NewTmdbCacheHandler(db)
 
 	// 初始化 Gin 引擎
 	r := gin.New()
@@ -193,6 +194,13 @@ func main() {
 		protected.GET("/scan/duplicate-media", scanHandler.GetDuplicateMedia)
 		protected.GET("/scan/episode-mapping", scanHandler.GetEpisodeMappingAnomalies)
 		protected.GET("/scan/analysis-status", scanHandler.GetAnalysisStatus)
+
+		protected.GET("/tmdb-cache", tmdbCacheHandler.GetTmdbCacheList)
+		protected.GET("/tmdb-cache/status", tmdbCacheHandler.GetTmdbCacheStatus)
+		protected.PUT("/tmdb-cache/:id", tmdbCacheHandler.UpdateTmdbCache)
+		protected.DELETE("/tmdb-cache/:id", tmdbCacheHandler.DeleteTmdbCache)
+		protected.DELETE("/tmdb-cache/show/:tmdbId", tmdbCacheHandler.DeleteTmdbCacheByShow)
+		protected.POST("/tmdb-cache/clear", tmdbCacheHandler.ClearTmdbCache)
 	}
 
 	// 启动服务

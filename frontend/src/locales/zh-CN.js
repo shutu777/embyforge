@@ -25,6 +25,7 @@ export default {
     scrapeAnomaly: '刮削异常',
     duplicateMedia: '重复媒体',
     episodeMapping: '异常映射',
+    tmdbCache: 'TMDB 缓存',
     systemManagement: '系统管理',
     systemConfig: '系统配置',
   },

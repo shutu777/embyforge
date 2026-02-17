@@ -916,42 +916,81 @@ func (s *ScanService) AnalyzeEpisodeMappingFromCacheWithContext(ctx context.Cont
 				})
 			}
 
-			// 获取 TMDB 数据（使用带 context 的方法）
-			tmdbDetails, err := tmdbClient.GetTVShowDetailsWithContext(cancelCtx, tmdbID)
-			if err != nil {
+			// 先查询 TMDB 缓存
+			var tmdbCaches []model.TmdbCache
+			s.DB.Where("tmdb_id = ?", tmdbID).Find(&tmdbCaches)
+
+			var tmdbSeasons []tmdb.Season
+			if len(tmdbCaches) > 0 {
+				// 使用缓存数据
+				for _, tc := range tmdbCaches {
+					tmdbSeasons = append(tmdbSeasons, tmdb.Season{
+						SeasonNumber: tc.SeasonNumber,
+						EpisodeCount: tc.EpisodeCount,
+						Name:         tc.SeasonName,
+					})
+				}
 				progressMu.Lock()
 				progressCount++
 				current := progressCount
 				progressMu.Unlock()
+				log.Printf("📦 [%d/%d] 使用 TMDB 缓存: %q (TMDB ID=%d, %d 季)",
+					current, len(seriesCaches), cache.Name, tmdbID, len(tmdbSeasons))
+			} else {
+				// 缓存未命中，请求 TMDB API
+				tmdbDetails, err := tmdbClient.GetTVShowDetailsWithContext(cancelCtx, tmdbID)
+				if err != nil {
+					progressMu.Lock()
+					progressCount++
+					current := progressCount
+					progressMu.Unlock()
 
-				// 检测是否为认证错误（401）
-				if tmdb.IsAuthError(err) {
-					count := consecutiveAuthErrors.Add(1)
-					log.Printf("🔑 [%d/%d] TMDB 认证失败 (401): %q (TMDB ID=%d), 连续失败 %d 次",
-						current, len(seriesCaches), cache.Name, tmdbID, count)
-					if int(count) >= maxConsecutiveAuthErrors {
-						log.Printf("🚫 连续 %d 次 TMDB 认证失败，API Key 可能无效，中止分析", count)
-						cancelFunc()
+					// 检测是否为认证错误（401）
+					if tmdb.IsAuthError(err) {
+						count := consecutiveAuthErrors.Add(1)
+						log.Printf("🔑 [%d/%d] TMDB 认证失败 (401): %q (TMDB ID=%d), 连续失败 %d 次",
+							current, len(seriesCaches), cache.Name, tmdbID, count)
+						if int(count) >= maxConsecutiveAuthErrors {
+							log.Printf("🚫 连续 %d 次 TMDB 认证失败，API Key 可能无效，中止分析", count)
+							cancelFunc()
+						}
+					} else {
+						// 非 401 错误，重置连续计数
+						consecutiveAuthErrors.Store(0)
+						log.Printf("❌ [%d/%d] TMDB 请求失败: %q (TMDB ID=%d): %v",
+							current, len(seriesCaches), cache.Name, tmdbID, err)
 					}
-				} else {
-					// 非 401 错误，重置连续计数
-					consecutiveAuthErrors.Store(0)
-					log.Printf("❌ [%d/%d] TMDB 请求失败: %q (TMDB ID=%d): %v",
-						current, len(seriesCaches), cache.Name, tmdbID, err)
+
+					return workerpool.Result[tmdbResult]{Value: tmdbResult{Err: err}}
 				}
 
-				return workerpool.Result[tmdbResult]{Value: tmdbResult{Err: err}}
+				// 请求成功，重置连续 401 计数
+				consecutiveAuthErrors.Store(0)
+				tmdbSeasons = tmdbDetails.Seasons
+
+				// 写入 TMDB 缓存
+				now := time.Now()
+				for _, season := range tmdbDetails.Seasons {
+					tc := model.TmdbCache{
+						TmdbID:       tmdbID,
+						Name:         tmdbDetails.Name,
+						SeasonNumber: season.SeasonNumber,
+						EpisodeCount: season.EpisodeCount,
+						SeasonName:   season.Name,
+						CachedAt:     now,
+						UpdatedAt:    now,
+					}
+					s.DB.Where("tmdb_id = ? AND season_number = ?", tmdbID, season.SeasonNumber).
+						Assign(tc).FirstOrCreate(&tc)
+				}
+
+				progressMu.Lock()
+				progressCount++
+				current := progressCount
+				progressMu.Unlock()
+				log.Printf("✅ [%d/%d] TMDB 请求成功并已缓存: %q (TMDB ID=%d, %d 季)",
+					current, len(seriesCaches), cache.Name, tmdbID, len(tmdbSeasons))
 			}
-
-			// 请求成功，重置连续 401 计数
-			consecutiveAuthErrors.Store(0)
-
-			progressMu.Lock()
-			progressCount++
-			current := progressCount
-			progressMu.Unlock()
-			log.Printf("✅ [%d/%d] TMDB 请求成功: %q (TMDB ID=%d, %d 季)",
-				current, len(seriesCaches), cache.Name, tmdbID, len(tmdbDetails.Seasons))
 
 			return workerpool.Result[tmdbResult]{
 				Value: tmdbResult{
@@ -960,7 +999,7 @@ func (s *ScanService) AnalyzeEpisodeMappingFromCacheWithContext(ctx context.Cont
 						Name:         cache.Name,
 						TmdbID:       tmdbID,
 						LocalSeasons: localSeasons,
-						TmdbSeasons:  tmdbDetails.Seasons,
+						TmdbSeasons:  tmdbSeasons,
 					},
 				},
 			}
