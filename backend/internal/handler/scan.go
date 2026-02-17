@@ -400,10 +400,303 @@ func (h *ScanHandler) AnalyzeEpisodeMapping(c *gin.Context) {
 	})
 }
 
+// CleanupDuplicateMedia POST /api/cleanup/duplicate-media - 批量清理重复媒体
+// 接收前端传来的待删除 emby_item_id 列表，逐个调用 Emby DeleteVersion 接口
+func (h *ScanHandler) CleanupDuplicateMedia(c *gin.Context) {
+	var req struct {
+		Items []string `json:"items"` // 要删除的 emby_item_id 列表
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.Items) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "请选择要删除的条目",
+		})
+		return
+	}
+
+	log.Printf("🧹 开始批量清理重复媒体，共 %d 个条目...", len(req.Items))
+
+	client, err := h.getEmbyClient()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "请先配置 Emby 服务器连接信息",
+		})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Minute)
+	defer cancel()
+
+	deletedCount := 0
+	failedCount := 0
+	var freedSize int64
+	var failedItems []string
+
+	// 查询这些条目的详细信息（用于日志和统计释放空间）
+	var toDelete []model.DuplicateMedia
+	h.DB.Where("emby_item_id IN ?", req.Items).Find(&toDelete)
+
+	// 构建 emby_item_id -> DuplicateMedia 映射
+	itemMap := make(map[string]model.DuplicateMedia)
+	for _, d := range toDelete {
+		itemMap[d.EmbyItemID] = d
+	}
+
+	for _, embyID := range req.Items {
+		item, exists := itemMap[embyID]
+
+		// 调用 Emby DeleteVersion 接口
+		if err := client.DeleteVersion(ctx, embyID); err != nil {
+			log.Printf("❌ 删除版本失败 [%s]: %v", embyID, err)
+			failedCount++
+			failedItems = append(failedItems, embyID)
+			continue
+		}
+
+		if exists {
+			log.Printf("🗑️  已删除 [%s] %s (%.1f MB)", embyID, item.Path, float64(item.FileSize)/1024/1024)
+			freedSize += item.FileSize
+		} else {
+			log.Printf("🗑️  已删除 [%s]", embyID)
+		}
+		deletedCount++
+	}
+
+	// 从数据库中删除已清理的记录
+	if deletedCount > 0 {
+		// 排除失败的，只删除成功的
+		successIDs := make([]string, 0, deletedCount)
+		for _, id := range req.Items {
+			isFailed := false
+			for _, fid := range failedItems {
+				if id == fid {
+					isFailed = true
+					break
+				}
+			}
+			if !isFailed {
+				successIDs = append(successIDs, id)
+			}
+		}
+		if len(successIDs) > 0 {
+			h.DB.Where("emby_item_id IN ?", successIDs).Delete(&model.DuplicateMedia{})
+		}
+
+		// 清理只剩一条记录的分组（不再是重复）
+		h.DB.Exec(`DELETE FROM duplicate_media WHERE group_key IN (
+			SELECT group_key FROM duplicate_media GROUP BY group_key HAVING COUNT(*) < 2
+		)`)
+	}
+
+	log.Printf("✅ 重复媒体清理完成: 删除 %d 个, 释放 %.1f MB, 失败 %d 个",
+		deletedCount, float64(freedSize)/1024/1024, failedCount)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "清理完成",
+		"data": gin.H{
+			"deleted_count": deletedCount,
+			"freed_size":    freedSize,
+			"failed_count":  failedCount,
+			"failed_items":  failedItems,
+		},
+	})
+}
+
+// PreviewDuplicateCleanup GET /api/cleanup/duplicate-media/preview - 预览待清理的重复媒体
+// 返回所有重复组，每组包含全部条目，并标记建议删除的（体积较小的）
+func (h *ScanHandler) PreviewDuplicateCleanup(c *gin.Context) {
+	// 获取所有重复媒体记录，按分组和文件大小升序排序
+	var duplicates []model.DuplicateMedia
+	h.DB.Order("group_key ASC, file_size ASC").Find(&duplicates)
+
+	// 按 group_key 分组
+	groups := make(map[string][]model.DuplicateMedia)
+	var groupOrder []string
+	for _, d := range duplicates {
+		if _, exists := groups[d.GroupKey]; !exists {
+			groupOrder = append(groupOrder, d.GroupKey)
+		}
+		groups[d.GroupKey] = append(groups[d.GroupKey], d)
+	}
+
+	type previewItem struct {
+		EmbyItemID    string `json:"emby_item_id"`
+		Name          string `json:"name"`
+		Type          string `json:"type"`
+		Path          string `json:"path"`
+		FileSize      int64  `json:"file_size"`
+		ShouldDelete  bool   `json:"should_delete"` // 建议删除（体积较小的）
+	}
+
+	type previewGroup struct {
+		GroupKey  string        `json:"group_key"`
+		GroupName string        `json:"group_name"`
+		Items     []previewItem `json:"items"`
+	}
+
+	var result []previewGroup
+	totalDeleteCount := 0
+	var totalFreedSize int64
+
+	for _, key := range groupOrder {
+		groupItems := groups[key]
+		if len(groupItems) < 2 {
+			continue
+		}
+
+		pg := previewGroup{
+			GroupKey:  key,
+			GroupName: groupItems[0].GroupName,
+		}
+
+		// 按文件大小升序排列，保留最后一个（体积最大的），其余建议删除
+		// 大小相同时默认删除排在前面的
+		lastIdx := len(groupItems) - 1
+		for i, item := range groupItems {
+			shouldDelete := i < lastIdx // 最后一个保留，其余删除
+			pg.Items = append(pg.Items, previewItem{
+				EmbyItemID:   item.EmbyItemID,
+				Name:         item.Name,
+				Type:         item.Type,
+				Path:         item.Path,
+				FileSize:     item.FileSize,
+				ShouldDelete: shouldDelete,
+			})
+			if shouldDelete {
+				totalDeleteCount++
+				totalFreedSize += item.FileSize
+			}
+		}
+
+		result = append(result, pg)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data":               result,
+		"total_groups":       len(result),
+		"total_delete_count": totalDeleteCount,
+		"total_freed_size":   totalFreedSize,
+	})
+}
+
 // FormatAnalysisSummary 格式化分析结果摘要日志字符串
 func FormatAnalysisSummary(analysisType string, result *service.ScanResult) string {
 	return fmt.Sprintf("✅ %s分析完成: 共分析 %d 个条目, 发现 %d 个异常, %d 个错误",
 		analysisType, result.TotalScanned, result.AnomalyCount, result.ErrorCount)
+}
+
+// CleanupScrapeAnomalies POST /api/cleanup/scrape-anomaly - 批量删除刮削异常条目
+// 接收前端传来的待删除 emby_item_id 列表，逐个调用 Emby DeleteItem 接口
+func (h *ScanHandler) CleanupScrapeAnomalies(c *gin.Context) {
+	var req struct {
+		Items []string `json:"items"` // 要删除的 emby_item_id 列表
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.Items) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "请选择要删除的条目",
+		})
+		return
+	}
+
+	log.Printf("🧹 开始批量删除刮削异常条目，共 %d 个...", len(req.Items))
+
+	client, err := h.getEmbyClient()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "请先配置 Emby 服务器连接信息",
+		})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Minute)
+	defer cancel()
+
+	deletedCount := 0
+	failedCount := 0
+	var failedItems []string
+
+	// 查询这些条目的详细信息（用于日志）
+	var toDelete []model.ScrapeAnomaly
+	h.DB.Where("emby_item_id IN ?", req.Items).Find(&toDelete)
+
+	// 构建 emby_item_id -> ScrapeAnomaly 映射
+	itemMap := make(map[string]model.ScrapeAnomaly)
+	for _, d := range toDelete {
+		itemMap[d.EmbyItemID] = d
+	}
+
+	for _, embyID := range req.Items {
+		item, exists := itemMap[embyID]
+
+		// 调用 Emby DeleteItem 接口
+		if err := client.DeleteItem(ctx, embyID); err != nil {
+			log.Printf("❌ 删除条目失败 [%s]: %v", embyID, err)
+			failedCount++
+			failedItems = append(failedItems, embyID)
+			continue
+		}
+
+		if exists {
+			log.Printf("🗑️  已删除 [%s] %s", embyID, item.Name)
+		} else {
+			log.Printf("🗑️  已删除 [%s]", embyID)
+		}
+		deletedCount++
+	}
+
+	// 从数据库中删除已清理的记录
+	if deletedCount > 0 {
+		successIDs := make([]string, 0, deletedCount)
+		for _, id := range req.Items {
+			isFailed := false
+			for _, fid := range failedItems {
+				if id == fid {
+					isFailed = true
+					break
+				}
+			}
+			if !isFailed {
+				successIDs = append(successIDs, id)
+			}
+		}
+		if len(successIDs) > 0 {
+			h.DB.Where("emby_item_id IN ?", successIDs).Delete(&model.ScrapeAnomaly{})
+		}
+	}
+
+	// 同时清理 media_cache 中对应的缓存记录
+	if deletedCount > 0 {
+		successIDs := make([]string, 0, deletedCount)
+		for _, id := range req.Items {
+			isFailed := false
+			for _, fid := range failedItems {
+				if id == fid {
+					isFailed = true
+					break
+				}
+			}
+			if !isFailed {
+				successIDs = append(successIDs, id)
+			}
+		}
+		if len(successIDs) > 0 {
+			h.DB.Where("emby_item_id IN ?", successIDs).Delete(&model.MediaCache{})
+		}
+	}
+
+	log.Printf("✅ 刮削异常清理完成: 删除 %d 个, 失败 %d 个", deletedCount, failedCount)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "清理完成",
+		"data": gin.H{
+			"deleted_count": deletedCount,
+			"failed_count":  failedCount,
+			"failed_items":  failedItems,
+		},
+	})
 }
 
 // GetAnalysisStatus 获取各分析模块的最后分析时间和异常数量

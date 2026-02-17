@@ -21,6 +21,12 @@ const analyzing = ref(false)
 const loading = ref(false)
 const analyzeResult = ref(null)
 
+// 清理状态
+const cleaning = ref(false)
+const cleanResult = ref(null)
+const showCleanDialog = ref(false)
+const selectedItems = ref([])
+
 // Emby 配置（用于构建跳转链接）
 const embyConfig = ref(null)
 
@@ -128,6 +134,7 @@ async function fetchAnomalies() {
 async function startAnalyze() {
   analyzing.value = true
   analyzeResult.value = null
+  cleanResult.value = null
   try {
     const { data } = await api.post('/analyze/scrape-anomaly')
     analyzeResult.value = data.data
@@ -145,6 +152,48 @@ async function startAnalyze() {
 function onPageChange(newPage) {
   page.value = newPage
   fetchAnomalies()
+}
+
+// 打开批量删除对话框
+function openCleanDialog() {
+  showCleanDialog.value = true
+  // 默认全选
+  selectedItems.value = anomalies.value.map(i => i.emby_item_id)
+}
+
+// 全选/取消全选
+function toggleSelectAll() {
+  const allIds = anomalies.value.map(i => i.emby_item_id)
+  if (selectedItems.value.length === allIds.length) {
+    selectedItems.value = []
+  } else {
+    selectedItems.value = [...allIds]
+  }
+}
+
+// 执行批量删除
+async function executeCleanup() {
+  if (selectedItems.value.length === 0) {
+    snackbar.error('请至少选择一个要删除的条目')
+    return
+  }
+  showCleanDialog.value = false
+  cleaning.value = true
+  cleanResult.value = null
+  try {
+    const { data } = await api.post('/cleanup/scrape-anomaly', {
+      items: selectedItems.value,
+    })
+    cleanResult.value = data.data
+    snackbar.success(`清理完成，删除 ${data.data.deleted_count} 个条目`)
+    page.value = 1
+    await Promise.all([fetchAnomalies(), fetchAnalysisStatus()])
+  } catch (e) {
+    cleanResult.value = { error: e.response?.data?.message || '清理失败' }
+    snackbar.error(e.response?.data?.message || '清理失败')
+  } finally {
+    cleaning.value = false
+  }
 }
 
 onMounted(async () => {
@@ -236,20 +285,28 @@ onMounted(async () => {
             <VBtn
               color="primary"
               :loading="analyzing"
-              :disabled="analyzing"
+              :disabled="analyzing || cleaning"
               @click="startAnalyze"
             >
               <VIcon icon="ri-play-fill" class="me-1" />
               {{ analyzing ? '分析中...' : '开始分析' }}
             </VBtn>
 
-            <!-- 分析结果 -->
-            <VCard
-              v-if="analyzeResult && !analyzeResult.error"
+            <VBtn
+              v-if="anomalyCount > 0"
+              color="error"
               variant="tonal"
-              color="success"
-              class="mt-4"
+              class="ms-3"
+              :loading="cleaning"
+              :disabled="analyzing || cleaning"
+              @click="openCleanDialog"
             >
+              <VIcon icon="ri-delete-bin-line" class="me-1" />
+              {{ cleaning ? '删除中...' : '批量删除' }}
+            </VBtn>
+
+            <!-- 分析结果 -->
+            <VCard v-if="analyzeResult && !analyzeResult.error" variant="tonal" color="success" class="mt-4">
               <VCardText class="d-flex align-center pa-4">
                 <VAvatar color="success" variant="tonal" size="38" rounded="lg" class="me-3">
                   <VIcon icon="ri-check-line" size="20" />
@@ -263,12 +320,7 @@ onMounted(async () => {
               </VCardText>
             </VCard>
 
-            <VCard
-              v-if="analyzeResult && analyzeResult.error"
-              variant="tonal"
-              color="error"
-              class="mt-4"
-            >
+            <VCard v-if="analyzeResult && analyzeResult.error" variant="tonal" color="error" class="mt-4">
               <VCardText class="d-flex align-center pa-4">
                 <VAvatar color="error" variant="tonal" size="38" rounded="lg" class="me-3">
                   <VIcon icon="ri-error-warning-line" size="20" />
@@ -276,6 +328,36 @@ onMounted(async () => {
                 <div>
                   <div class="text-body-2 font-weight-semibold">分析失败</div>
                   <div class="text-caption text-medium-emphasis">{{ analyzeResult.error }}</div>
+                </div>
+              </VCardText>
+            </VCard>
+
+            <!-- 清理结果 -->
+            <VCard v-if="cleanResult && !cleanResult.error" variant="tonal" color="success" class="mt-4">
+              <VCardText class="d-flex align-center pa-4">
+                <VAvatar color="success" variant="tonal" size="38" rounded="lg" class="me-3">
+                  <VIcon icon="ri-delete-bin-line" size="20" />
+                </VAvatar>
+                <div>
+                  <div class="text-body-2 font-weight-semibold">删除完成</div>
+                  <div class="text-caption text-medium-emphasis">
+                    删除 {{ cleanResult.deleted_count }} 个条目
+                    <template v-if="cleanResult.failed_count > 0">
+                      ，{{ cleanResult.failed_count }} 个失败
+                    </template>
+                  </div>
+                </div>
+              </VCardText>
+            </VCard>
+
+            <VCard v-if="cleanResult && cleanResult.error" variant="tonal" color="error" class="mt-4">
+              <VCardText class="d-flex align-center pa-4">
+                <VAvatar color="error" variant="tonal" size="38" rounded="lg" class="me-3">
+                  <VIcon icon="ri-error-warning-line" size="20" />
+                </VAvatar>
+                <div>
+                  <div class="text-body-2 font-weight-semibold">删除失败</div>
+                  <div class="text-caption text-medium-emphasis">{{ cleanResult.error }}</div>
                 </div>
               </VCardText>
             </VCard>
@@ -347,18 +429,119 @@ onMounted(async () => {
         </VCardText>
       </VCard>
     </template>
+
+    <!-- 批量删除对话框 -->
+    <VDialog v-model="showCleanDialog" max-width="1600" scrollable transition="none">
+      <VCard class="clean-dialog-card" data-no-hover>
+        <VCardTitle class="d-flex align-center pa-5 pb-4">
+          <VAvatar color="error" variant="tonal" size="36" rounded="lg" class="me-3">
+            <VIcon icon="ri-delete-bin-line" size="18" />
+          </VAvatar>
+          <div>
+            <div class="text-body-1 font-weight-semibold">批量删除刮削异常</div>
+            <div class="text-caption text-medium-emphasis">从 Emby 媒体库中删除选中的异常条目</div>
+          </div>
+        </VCardTitle>
+
+        <VDivider />
+
+        <VCardText class="pa-0" style="max-height: 80vh;">
+          <template v-if="anomalies.length > 0">
+            <!-- 工具栏 -->
+            <div class="clean-toolbar pa-4">
+              <div class="d-flex align-center justify-space-between">
+                <div class="d-flex align-center">
+                  <VCheckbox
+                    :model-value="selectedItems.length === anomalies.length && anomalies.length > 0"
+                    :indeterminate="selectedItems.length > 0 && selectedItems.length < anomalies.length"
+                    label="全选当前页"
+                    density="compact"
+                    hide-details
+                    @click="toggleSelectAll"
+                  />
+                </div>
+                <div class="d-flex align-center gap-3">
+                  <VChip size="small" variant="tonal" color="default">
+                    当前页 {{ anomalies.length }} 条
+                  </VChip>
+                  <VChip size="small" variant="tonal" :color="selectedItems.length > 0 ? 'error' : 'default'">
+                    已选 {{ selectedItems.length }} 项
+                  </VChip>
+                </div>
+              </div>
+              <div class="text-caption text-medium-emphasis mt-2">
+                选中的条目将从 Emby 媒体库中永久删除，请谨慎操作
+              </div>
+            </div>
+
+            <VDivider />
+
+            <!-- 条目列表 -->
+            <div class="preview-items">
+              <div
+                v-for="item in anomalies"
+                :key="item.emby_item_id"
+                class="preview-item d-flex align-center px-5 py-3"
+                :class="{ 'item-selected': selectedItems.includes(item.emby_item_id) }"
+              >
+                <VCheckbox
+                  :model-value="selectedItems.includes(item.emby_item_id)"
+                  density="compact"
+                  hide-details
+                  class="me-3 flex-shrink-0"
+                  @update:model-value="val => {
+                    if (val) selectedItems.push(item.emby_item_id)
+                    else selectedItems = selectedItems.filter(id => id !== item.emby_item_id)
+                  }"
+                />
+                <VChip
+                  size="x-small"
+                  :color="item.type === 'Movie' ? 'primary' : 'info'"
+                  variant="tonal"
+                  class="me-3 flex-shrink-0"
+                  style="min-width: 42px; justify-content: center;"
+                >
+                  {{ item.type === 'Movie' ? '电影' : '剧集' }}
+                </VChip>
+                <div class="flex-grow-1 overflow-hidden">
+                  <div class="text-body-2">{{ item.name }}</div>
+                  <div class="text-caption text-medium-emphasis">{{ item.path }}</div>
+                </div>
+                <div class="d-flex align-center gap-2 flex-shrink-0 ms-4">
+                  <VChip v-if="item.missing_poster" size="x-small" color="error" variant="flat">缺封面</VChip>
+                  <VChip v-if="item.missing_provider" size="x-small" color="warning" variant="flat">缺外部ID</VChip>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <div v-else class="text-center pa-12 text-body-2 text-medium-emphasis">
+            没有需要删除的异常条目
+          </div>
+        </VCardText>
+
+        <VDivider />
+
+        <VCardActions class="pa-4 px-5">
+          <VSpacer />
+          <VBtn variant="text" @click="showCleanDialog = false">取消</VBtn>
+          <VBtn
+            color="error"
+            :disabled="selectedItems.length === 0"
+            @click="executeCleanup"
+          >
+            <VIcon icon="ri-delete-bin-line" class="me-1" />
+            确认删除 ({{ selectedItems.length }})
+          </VBtn>
+        </VCardActions>
+      </VCard>
+    </VDialog>
   </div>
 </template>
 
 <style lang="scss" scoped>
 .stat-card {
   border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-
-  &:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-  }
 }
 
 .content-card {
@@ -379,6 +562,28 @@ onMounted(async () => {
 
 .h-100 {
   height: 100%;
+}
+
+.clean-dialog-card {
+  border-radius: 12px !important;
+}
+
+.clean-toolbar {
+  background: rgba(var(--v-theme-on-surface), 0.02);
+}
+
+.preview-items {
+  .preview-item {
+    border-block-end: 1px solid rgba(var(--v-border-color), 0.06);
+
+    &.item-selected {
+      background: rgba(var(--v-theme-error), 0.06);
+    }
+
+    &:last-child {
+      border-block-end: none;
+    }
+  }
 }
 </style>
 

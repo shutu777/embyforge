@@ -185,6 +185,10 @@ func main() {
 		protected.POST("/analyze/duplicate-media", scanHandler.AnalyzeDuplicateMedia)
 		protected.POST("/analyze/episode-mapping", scanHandler.AnalyzeEpisodeMapping)
 
+		protected.POST("/cleanup/duplicate-media", scanHandler.CleanupDuplicateMedia)
+		protected.GET("/cleanup/duplicate-media/preview", scanHandler.PreviewDuplicateCleanup)
+		protected.POST("/cleanup/scrape-anomaly", scanHandler.CleanupScrapeAnomalies)
+
 		protected.GET("/scan/scrape-anomaly", scanHandler.GetScrapeAnomalies)
 		protected.GET("/scan/duplicate-media", scanHandler.GetDuplicateMedia)
 		protected.GET("/scan/episode-mapping", scanHandler.GetEpisodeMappingAnomalies)

@@ -21,6 +21,14 @@ const analyzing = ref(false)
 const loading = ref(false)
 const analyzeResult = ref(null)
 
+// 清理状态
+const cleaning = ref(false)
+const cleanResult = ref(null)
+const showCleanDialog = ref(false)
+const loadingPreview = ref(false)
+const previewGroups = ref([])    // 按组返回的预览数据
+const selectedItems = ref([])    // 选中要删除的 emby_item_id 集合
+
 // Emby 配置
 const embyConfig = ref(null)
 
@@ -46,6 +54,11 @@ const dupGroupCount = computed(() => {
   return analysisStatus.value?.duplicate_media?.anomaly_count || 0
 })
 
+// 所有可删除的条目（should_delete 标记的）
+const allDeletableItems = computed(() => {
+  return previewGroups.value.flatMap(g => g.items.filter(i => i.should_delete))
+})
+
 // 从 group_key 判断是电影还是剧集
 function isMovieGroup(groupKey) {
   return groupKey && groupKey.startsWith('tmdb:movie:')
@@ -67,7 +80,6 @@ function formatGroupTitle(group) {
     const tmdbId = extractTmdbId(group.group_key)
     return tmdbId ? `${name} {tmdb-${tmdbId}}` : name
   }
-  // 剧集分组，group_name 已经是 "剧名 S01E01" 格式
   return name
 }
 
@@ -167,6 +179,7 @@ async function fetchDuplicates() {
 async function startAnalyze() {
   analyzing.value = true
   analyzeResult.value = null
+  cleanResult.value = null
   try {
     const { data } = await api.post('/analyze/duplicate-media')
     analyzeResult.value = data.data
@@ -184,6 +197,62 @@ async function startAnalyze() {
 function onPageChange(newPage) {
   page.value = newPage
   fetchDuplicates()
+}
+
+// 打开清理预览对话框
+async function openCleanDialog() {
+  loadingPreview.value = true
+  showCleanDialog.value = true
+  previewGroups.value = []
+  selectedItems.value = []
+  try {
+    const { data } = await api.get('/cleanup/duplicate-media/preview')
+    previewGroups.value = data.data || []
+    // 默认选中所有 should_delete 的条目
+    selectedItems.value = previewGroups.value
+      .flatMap(g => g.items.filter(i => i.should_delete))
+      .map(i => i.emby_item_id)
+  } catch (e) {
+    snackbar.error('获取待清理列表失败')
+    showCleanDialog.value = false
+  } finally {
+    loadingPreview.value = false
+  }
+}
+
+// 全选/取消全选（只操作 should_delete 的条目）
+function toggleSelectAll() {
+  const allIds = allDeletableItems.value.map(i => i.emby_item_id)
+  if (selectedItems.value.length === allIds.length) {
+    selectedItems.value = []
+  } else {
+    selectedItems.value = [...allIds]
+  }
+}
+
+// 执行批量删除
+async function executeCleanup() {
+  if (selectedItems.value.length === 0) {
+    snackbar.error('请至少选择一个要删除的条目')
+    return
+  }
+  showCleanDialog.value = false
+  cleaning.value = true
+  cleanResult.value = null
+  try {
+    const { data } = await api.post('/cleanup/duplicate-media', {
+      items: selectedItems.value,
+    })
+    cleanResult.value = data.data
+    snackbar.success(`清理完成，删除 ${data.data.deleted_count} 个文件`)
+    page.value = 1
+    await Promise.all([fetchDuplicates(), fetchAnalysisStatus()])
+  } catch (e) {
+    cleanResult.value = { error: e.response?.data?.message || '清理失败' }
+    snackbar.error(e.response?.data?.message || '清理失败')
+  } finally {
+    cleaning.value = false
+  }
 }
 
 onMounted(async () => {
@@ -273,13 +342,27 @@ onMounted(async () => {
             <VBtn
               color="primary"
               :loading="analyzing"
-              :disabled="analyzing"
+              :disabled="analyzing || cleaning"
               @click="startAnalyze"
             >
               <VIcon icon="ri-play-fill" class="me-1" />
               {{ analyzing ? '分析中...' : '开始分析' }}
             </VBtn>
 
+            <VBtn
+              v-if="dupGroupCount > 0"
+              color="error"
+              variant="tonal"
+              class="ms-3"
+              :loading="cleaning"
+              :disabled="analyzing || cleaning"
+              @click="openCleanDialog"
+            >
+              <VIcon icon="ri-delete-bin-line" class="me-1" />
+              {{ cleaning ? '清理中...' : '自动清理' }}
+            </VBtn>
+
+            <!-- 分析结果 -->
             <VCard v-if="analyzeResult && !analyzeResult.error" variant="tonal" color="success" class="mt-4">
               <VCardText class="d-flex align-center pa-4">
                 <VAvatar color="success" variant="tonal" size="38" rounded="lg" class="me-3">
@@ -302,6 +385,36 @@ onMounted(async () => {
                 <div>
                   <div class="text-body-2 font-weight-semibold">分析失败</div>
                   <div class="text-caption text-medium-emphasis">{{ analyzeResult.error }}</div>
+                </div>
+              </VCardText>
+            </VCard>
+
+            <!-- 清理结果 -->
+            <VCard v-if="cleanResult && !cleanResult.error" variant="tonal" color="success" class="mt-4">
+              <VCardText class="d-flex align-center pa-4">
+                <VAvatar color="success" variant="tonal" size="38" rounded="lg" class="me-3">
+                  <VIcon icon="ri-delete-bin-line" size="20" />
+                </VAvatar>
+                <div>
+                  <div class="text-body-2 font-weight-semibold">清理完成</div>
+                  <div class="text-caption text-medium-emphasis">
+                    删除 {{ cleanResult.deleted_count }} 个文件
+                    <template v-if="cleanResult.failed_count > 0">
+                      ，{{ cleanResult.failed_count }} 个失败
+                    </template>
+                  </div>
+                </div>
+              </VCardText>
+            </VCard>
+
+            <VCard v-if="cleanResult && cleanResult.error" variant="tonal" color="error" class="mt-4">
+              <VCardText class="d-flex align-center pa-4">
+                <VAvatar color="error" variant="tonal" size="38" rounded="lg" class="me-3">
+                  <VIcon icon="ri-error-warning-line" size="20" />
+                </VAvatar>
+                <div>
+                  <div class="text-body-2 font-weight-semibold">清理失败</div>
+                  <div class="text-caption text-medium-emphasis">{{ cleanResult.error }}</div>
                 </div>
               </VCardText>
             </VCard>
@@ -387,18 +500,133 @@ onMounted(async () => {
         </VCardText>
       </VCard>
     </template>
+
+    <!-- 清理预览对话框 -->
+    <VDialog v-model="showCleanDialog" max-width="1600" scrollable transition="none">
+      <VCard class="clean-dialog-card" data-no-hover>
+        <VCardTitle class="d-flex align-center pa-5 pb-4">
+          <VAvatar color="error" variant="tonal" size="36" rounded="lg" class="me-3">
+            <VIcon icon="ri-delete-bin-line" size="18" />
+          </VAvatar>
+          <div>
+            <div class="text-body-1 font-weight-semibold">自动清理重复媒体</div>
+            <div class="text-caption text-medium-emphasis">选择要删除的重复版本</div>
+          </div>
+        </VCardTitle>
+
+        <VDivider />
+
+        <VCardText class="pa-0" style="max-height: 80vh;">
+          <!-- 加载中 -->
+          <div v-if="loadingPreview" class="d-flex flex-column justify-center align-center pa-12">
+            <VProgressCircular indeterminate color="primary" size="44" />
+            <span class="mt-3 text-body-2 text-medium-emphasis">正在加载待清理列表...</span>
+          </div>
+
+          <template v-else-if="previewGroups.length > 0">
+            <!-- 提示信息 + 全选操作栏 -->
+            <div class="clean-toolbar pa-4">
+              <div class="d-flex align-center justify-space-between">
+                <div class="d-flex align-center">
+                  <VCheckbox
+                    :model-value="selectedItems.length === allDeletableItems.length && allDeletableItems.length > 0"
+                    :indeterminate="selectedItems.length > 0 && selectedItems.length < allDeletableItems.length"
+                    label="全选默认项"
+                    density="compact"
+                    hide-details
+                    @click="toggleSelectAll"
+                  />
+                </div>
+                <div class="d-flex align-center gap-3">
+                  <VChip size="small" variant="tonal" color="default">
+                    共 {{ previewGroups.length }} 组
+                  </VChip>
+                  <VChip size="small" variant="tonal" :color="selectedItems.length > 0 ? 'error' : 'default'">
+                    已选 {{ selectedItems.length }} 项
+                  </VChip>
+                </div>
+              </div>
+              <div class="text-caption text-medium-emphasis mt-2">
+                默认勾选体积较小的版本进行删除，你可以取消勾选或改选其他版本
+              </div>
+            </div>
+
+            <VDivider />
+
+            <!-- 按组展示 -->
+            <div v-for="group in previewGroups" :key="group.group_key" class="preview-group">
+              <div class="group-header px-5 py-2 d-flex align-center">
+                <VChip size="x-small" :color="isMovieGroup(group.group_key) ? 'primary' : 'info'" variant="tonal" class="me-2">
+                  {{ isMovieGroup(group.group_key) ? '电影' : '剧集' }}
+                </VChip>
+                <span class="text-body-2 font-weight-medium">{{ group.group_name }}</span>
+              </div>
+
+              <div class="preview-items">
+                <div
+                  v-for="item in group.items"
+                  :key="item.emby_item_id"
+                  class="preview-item d-flex align-center px-5 py-2"
+                  :class="{ 'item-selected': selectedItems.includes(item.emby_item_id) }"
+                >
+                  <VCheckbox
+                    :model-value="selectedItems.includes(item.emby_item_id)"
+                    density="compact"
+                    hide-details
+                    class="me-3 flex-shrink-0"
+                    @update:model-value="val => {
+                      if (val) selectedItems.push(item.emby_item_id)
+                      else selectedItems = selectedItems.filter(id => id !== item.emby_item_id)
+                    }"
+                  />
+                  <VChip
+                    size="x-small"
+                    :color="selectedItems.includes(item.emby_item_id) ? 'error' : 'success'"
+                    variant="flat"
+                    class="me-3 flex-shrink-0"
+                    style="min-width: 42px; justify-content: center;"
+                  >
+                    {{ selectedItems.includes(item.emby_item_id) ? '删除' : '保留' }}
+                  </VChip>
+                  <div class="flex-grow-1 overflow-hidden">
+                    <div class="text-body-2">{{ item.name }}</div>
+                    <div class="text-caption text-medium-emphasis path-cell">{{ item.path }}</div>
+                  </div>
+                  <div class="text-body-2 font-weight-medium flex-shrink-0 ms-4" style="min-width: 80px; text-align: right;">
+                    {{ formatSize(item.file_size) }}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <div v-else class="text-center pa-12 text-body-2 text-medium-emphasis">
+            没有需要清理的重复媒体
+          </div>
+        </VCardText>
+
+        <VDivider />
+
+        <VCardActions class="pa-4 px-5">
+          <VSpacer />
+          <VBtn variant="text" @click="showCleanDialog = false">取消</VBtn>
+          <VBtn
+            color="error"
+            :disabled="selectedItems.length === 0"
+            @click="executeCleanup"
+          >
+            <VIcon icon="ri-delete-bin-line" class="me-1" />
+            确认删除 ({{ selectedItems.length }})
+          </VBtn>
+        </VCardActions>
+      </VCard>
+    </VDialog>
   </div>
 </template>
 
 <style lang="scss" scoped>
 .stat-card {
   border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-
-  &:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-  }
 }
 
 .content-card {
@@ -422,9 +650,44 @@ onMounted(async () => {
 }
 
 .path-cell {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 400px;
+  word-break: break-all;
+}
+
+.clean-dialog-card {
+  border-radius: 12px !important;
+}
+
+:deep(.v-dialog) {
+  transition: none !important;
+}
+
+:deep(.v-overlay__content) {
+  animation: none !important;
+  transition: none !important;
+}
+
+.clean-toolbar {
+  background: rgba(var(--v-theme-on-surface), 0.02);
+}
+
+.preview-group {
+  .group-header {
+    background: rgba(var(--v-theme-on-surface), 0.04);
+    border-block-end: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  }
+}
+
+.preview-items {
+  .preview-item {
+    border-block-end: 1px solid rgba(var(--v-border-color), 0.06);
+
+    &.item-selected {
+      background: rgba(var(--v-theme-error), 0.06);
+    }
+
+    &:last-child {
+      border-block-end: none;
+    }
+  }
 }
 </style>
