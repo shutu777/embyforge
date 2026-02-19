@@ -50,6 +50,11 @@ export const routes = [
         component: () => import('@/pages/symedia-config.vue'),
       },
       {
+        path: 'rendering-words',
+        name: 'rendering-words',
+        component: () => import('@/pages/rendering-words.vue'),
+      },
+      {
         path: 'profile',
         name: 'profile',
         component: () => import('@/pages/profile.vue'),

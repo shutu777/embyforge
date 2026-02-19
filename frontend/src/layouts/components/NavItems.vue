@@ -71,6 +71,13 @@ const { t } = useI18n()
       to: '/symedia-config',
     }"
   />
+  <VerticalNavLink
+    :item="{
+      title: t('menu.renderingWords'),
+      icon: 'ri-code-s-slash-line',
+      to: '/rendering-words',
+    }"
+  />
 
   <!-- 👉 系统管理 -->
   <VerticalNavSectionTitle

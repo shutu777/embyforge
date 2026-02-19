@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -996,10 +997,10 @@ func (h *ScanHandler) GetEpisodeMappingAnomalies(c *gin.Context) {
 			Group("emby_item_id").
 			Having("COUNT(*) = 1")
 	case "multi":
-		// 多季异常的
+		// 多季异常：本地有多季，但 TMDB 只有一季
 		groupQuery = groupQuery.Select("emby_item_id, COUNT(*) as season_count").
-			Group("emby_item_id").
-			Having("COUNT(*) > 1")
+			Where("local_season_count > 1 AND tmdb_season_count = 1").
+			Group("emby_item_id")
 	default:
 		groupQuery = groupQuery.Select("emby_item_id, COUNT(*) as season_count").
 			Group("emby_item_id")
@@ -1047,7 +1048,7 @@ func (h *ScanHandler) GetEpisodeMappingAnomalies(c *gin.Context) {
 	case "single":
 		idQuery = idQuery.Having("COUNT(*) = 1")
 	case "multi":
-		idQuery = idQuery.Having("COUNT(*) > 1")
+		idQuery = idQuery.Where("local_season_count > 1 AND tmdb_season_count = 1")
 	}
 
 	idQuery.Order(orderClause).
@@ -1063,25 +1064,121 @@ func (h *ScanHandler) GetEpisodeMappingAnomalies(c *gin.Context) {
 
 	var groups []EpisodeMappingGroup
 	if len(embyItemIDs) > 0 {
+		// 获取异常记录（用于显示差异）
 		var anomalies []model.EpisodeMappingAnomaly
 		h.DB.Where("emby_item_id IN ?", embyItemIDs).
 			Order("season_number ASC").
 			Find(&anomalies)
 
-		groupMap := make(map[string]*EpisodeMappingGroup)
-		for _, a := range anomalies {
-			g, exists := groupMap[a.EmbyItemID]
-			if !exists {
-				g = &EpisodeMappingGroup{
-					EmbyItemID:  a.EmbyItemID,
-					Name:        a.Name,
-					TmdbID:      a.TmdbID,
-					SeasonCount: seasonCountMap[a.EmbyItemID],
-					Seasons:     []model.EpisodeMappingAnomaly{},
-				}
-				groupMap[a.EmbyItemID] = g
+		// 获取所有季的完整信息（从 season_cache）
+		var seasonCaches []model.SeasonCache
+		h.DB.Where("series_emby_item_id IN ?", embyItemIDs).
+			Order("season_number ASC").
+			Find(&seasonCaches)
+
+		// 构建 emby_item_id -> 季信息的映射
+		seasonMap := make(map[string]map[int]model.SeasonCache) // emby_item_id -> season_number -> SeasonCache
+		for _, sc := range seasonCaches {
+			if _, exists := seasonMap[sc.SeriesEmbyItemID]; !exists {
+				seasonMap[sc.SeriesEmbyItemID] = make(map[int]model.SeasonCache)
 			}
-			g.Seasons = append(g.Seasons, a)
+			seasonMap[sc.SeriesEmbyItemID][sc.SeasonNumber] = sc
+		}
+
+		// 构建 emby_item_id -> 异常记录的映射
+		anomalyMap := make(map[string]map[int]model.EpisodeMappingAnomaly) // emby_item_id -> season_number -> Anomaly
+		seriesInfoMap := make(map[string]model.EpisodeMappingAnomaly)      // emby_item_id -> 剧集信息（取第一条）
+		for _, a := range anomalies {
+			if _, exists := seriesInfoMap[a.EmbyItemID]; !exists {
+				seriesInfoMap[a.EmbyItemID] = a
+			}
+			if _, exists := anomalyMap[a.EmbyItemID]; !exists {
+				anomalyMap[a.EmbyItemID] = make(map[int]model.EpisodeMappingAnomaly)
+			}
+			anomalyMap[a.EmbyItemID][a.SeasonNumber] = a
+		}
+
+		// 获取 TMDB 缓存数据
+		tmdbIDs := make([]int, 0)
+		for _, a := range seriesInfoMap {
+			tmdbIDs = append(tmdbIDs, a.TmdbID)
+		}
+		var tmdbCaches []model.TmdbCache
+		if len(tmdbIDs) > 0 {
+			h.DB.Where("tmdb_id IN ?", tmdbIDs).Find(&tmdbCaches)
+		}
+
+		// 构建 tmdb_id -> season_number -> episode_count 的映射
+		tmdbMap := make(map[int]map[int]int) // tmdb_id -> season_number -> episode_count
+		for _, tc := range tmdbCaches {
+			if _, exists := tmdbMap[tc.TmdbID]; !exists {
+				tmdbMap[tc.TmdbID] = make(map[int]int)
+			}
+			tmdbMap[tc.TmdbID][tc.SeasonNumber] = tc.EpisodeCount
+		}
+
+		// 构建返回结果
+		groupMap := make(map[string]*EpisodeMappingGroup)
+		for embyItemID, seasons := range seasonMap {
+			info, hasInfo := seriesInfoMap[embyItemID]
+			if !hasInfo {
+				continue // 没有异常记录，跳过（不应该发生）
+			}
+
+			g := &EpisodeMappingGroup{
+				EmbyItemID:  embyItemID,
+				Name:        info.Name,
+				TmdbID:      info.TmdbID,
+				SeasonCount: seasonCountMap[embyItemID],
+				Seasons:     []model.EpisodeMappingAnomaly{},
+			}
+
+			// 遍历所有本地季，构建完整的季信息
+			// 先收集所有季号并排序
+			seasonNumbers := make([]int, 0, len(seasons))
+			for seasonNum := range seasons {
+				if seasonNum > 0 { // 跳过特别篇
+					seasonNumbers = append(seasonNumbers, seasonNum)
+				}
+			}
+			// 排序季号
+			sort.Ints(seasonNumbers)
+
+			// 按排序后的季号构建季记录
+			for _, seasonNum := range seasonNumbers {
+				sc := seasons[seasonNum]
+
+				// 获取 TMDB 集数
+				tmdbEpisodes := 0
+				if tmdbSeasons, exists := tmdbMap[info.TmdbID]; exists {
+					if count, ok := tmdbSeasons[seasonNum]; ok {
+						tmdbEpisodes = count
+					}
+				}
+
+				// 计算差异
+				diff := sc.EpisodeCount - tmdbEpisodes
+				if diff < 0 {
+					diff = -diff
+				}
+
+				// 构建季记录
+				seasonRecord := model.EpisodeMappingAnomaly{
+					EmbyItemID:       embyItemID,
+					Name:             info.Name,
+					TmdbID:           info.TmdbID,
+					SeasonNumber:     seasonNum,
+					LocalEpisodes:    sc.EpisodeCount,
+					TmdbEpisodes:     tmdbEpisodes,
+					Difference:       diff,
+					LocalSeasonCount: info.LocalSeasonCount,
+					TmdbSeasonCount:  info.TmdbSeasonCount,
+				}
+
+				g.Seasons = append(g.Seasons, seasonRecord)
+			}
+
+			groupMap[embyItemID] = g
 		}
 
 		// 按 groupRows 的顺序输出（保持排序）

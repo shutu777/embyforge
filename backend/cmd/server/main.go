@@ -138,6 +138,7 @@ func main() {
 	tmdbCacheHandler := handler.NewTmdbCacheHandler(db)
 	symediaHandler := handler.NewSymediaHandler(db, cfg.JWTSecret)
 	webhookHandler := handler.NewWebhookHandler(db, symediaHandler)
+	renderingWordsHandler := handler.NewRenderingWordsHandler(db)
 
 	// 初始化 Gin 引擎
 	r := gin.New()
@@ -222,6 +223,10 @@ func main() {
 		protected.POST("/symedia/refresh", symediaHandler.ManualRefresh)
 		protected.POST("/symedia/github-config-save", symediaHandler.SaveGithubConfigOnly)
 		protected.POST("/symedia/github-config", symediaHandler.SaveGithubConfig)
+
+		// 渲染词生成器
+		protected.GET("/rendering-words/import-candidates", renderingWordsHandler.GetImportCandidates)
+		protected.GET("/rendering-words/validate-tmdb/:tmdbId", renderingWordsHandler.ValidateTmdbID)
 	}
 
 	// 启动服务

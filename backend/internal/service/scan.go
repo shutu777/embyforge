@@ -338,12 +338,31 @@ func DetectEpisodeMappingAnomalies(seriesList []SeriesInfo) []model.EpisodeMappi
 	var anomalies []model.EpisodeMappingAnomaly
 
 	for _, series := range seriesList {
-		// 构建 TMDB 季集数映射（排除特别篇 season_number=0）
+		// 计算本地季数（排除特别篇 season_number=0）
+		localSeasonCount := 0
+		for _, local := range series.LocalSeasons {
+			if local.SeasonNumber > 0 {
+				localSeasonCount++
+			}
+		}
+
+		// 计算 TMDB 有效季数（排除特别篇 season_number=0，且 EpisodeCount > 0）
+		// 注意：只统计有集数的季，不统计空季
+		tmdbSeasonCount := 0
 		tmdbSeasonMap := make(map[int]int) // seasonNumber -> episodeCount
 		for _, s := range series.TmdbSeasons {
-			if s.SeasonNumber > 0 {
+			if s.SeasonNumber > 0 && s.EpisodeCount > 0 {
+				tmdbSeasonCount++
 				tmdbSeasonMap[s.SeasonNumber] = s.EpisodeCount
 			}
+		}
+		
+		// 调试日志：输出 TMDB 季数统计
+		if series.TmdbID == 4057 || series.TmdbID == 71795 {
+			log.Printf("🔍 [调试] 剧集: %s (TMDB ID=%d)", series.Name, series.TmdbID)
+			log.Printf("   TMDB 总季数: %d", len(series.TmdbSeasons))
+			log.Printf("   TMDB 有效季数: %d", tmdbSeasonCount)
+			log.Printf("   本地季数: %d", localSeasonCount)
 		}
 
 		// 对比每个本地季
@@ -354,15 +373,17 @@ func DetectEpisodeMappingAnomalies(seriesList []SeriesInfo) []model.EpisodeMappi
 
 			tmdbEpisodes, exists := tmdbSeasonMap[local.SeasonNumber]
 			if !exists {
-				// TMDB 中不存在该季，标记为异常
+				// TMDB 中不存在该季（或该季没有集数），标记为异常
 				anomalies = append(anomalies, model.EpisodeMappingAnomaly{
-					EmbyItemID:    series.EmbyItemID,
-					Name:          series.Name,
-					TmdbID:        series.TmdbID,
-					SeasonNumber:  local.SeasonNumber,
-					LocalEpisodes: local.EpisodeCount,
-					TmdbEpisodes:  0,
-					Difference:    local.EpisodeCount,
+					EmbyItemID:       series.EmbyItemID,
+					Name:             series.Name,
+					TmdbID:           series.TmdbID,
+					SeasonNumber:     local.SeasonNumber,
+					LocalEpisodes:    local.EpisodeCount,
+					TmdbEpisodes:     0,
+					Difference:       local.EpisodeCount,
+					LocalSeasonCount: localSeasonCount,
+					TmdbSeasonCount:  tmdbSeasonCount,
 				})
 				continue
 			}
@@ -373,13 +394,15 @@ func DetectEpisodeMappingAnomalies(seriesList []SeriesInfo) []model.EpisodeMappi
 					diff = -diff
 				}
 				anomalies = append(anomalies, model.EpisodeMappingAnomaly{
-					EmbyItemID:    series.EmbyItemID,
-					Name:          series.Name,
-					TmdbID:        series.TmdbID,
-					SeasonNumber:  local.SeasonNumber,
-					LocalEpisodes: local.EpisodeCount,
-					TmdbEpisodes:  tmdbEpisodes,
-					Difference:    diff,
+					EmbyItemID:       series.EmbyItemID,
+					Name:             series.Name,
+					TmdbID:           series.TmdbID,
+					SeasonNumber:     local.SeasonNumber,
+					LocalEpisodes:    local.EpisodeCount,
+					TmdbEpisodes:     tmdbEpisodes,
+					Difference:       diff,
+					LocalSeasonCount: localSeasonCount,
+					TmdbSeasonCount:  tmdbSeasonCount,
 				})
 			}
 		}
