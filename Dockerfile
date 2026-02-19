@@ -18,7 +18,8 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o /app/embyforge ./c
 # 阶段3：最终运行镜像
 FROM alpine:3.19
 RUN apk add --no-cache nginx supervisor ca-certificates tzdata \
-    && mkdir -p /run/nginx /data
+    && mkdir -p /run/nginx /data /data/uploads/avatars \
+    && chown -R nginx:nginx /data/uploads
 
 # 复制 Nginx 配置
 COPY nginx.conf /etc/nginx/http.d/default.conf

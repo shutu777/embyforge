@@ -139,6 +139,9 @@ func (h *ProfileHandler) UploadAvatar(c *gin.Context) {
 		return
 	}
 
+	// 设置文件权限，确保 nginx 用户可以读取
+	os.Chmod(savePath, 0644)
+
 	// 删除旧头像文件
 	var user model.User
 	if err := h.DB.First(&user, userID).Error; err == nil && user.Avatar != "" {

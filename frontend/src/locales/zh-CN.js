@@ -18,7 +18,6 @@ export default {
   // 导航菜单
   menu: {
     dashboard: '首页',
-    embyManagement: 'Emby 管理',
     embyConfig: 'Emby 配置',
     scanTools: '扫描工具',
     mediaScan: '扫描媒体',
@@ -26,6 +25,8 @@ export default {
     duplicateMedia: '重复媒体',
     episodeMapping: '异常映射',
     tmdbCache: 'TMDB 缓存',
+    symediaManagement: 'Symedia管理',
+    configRefresh: '配置刷新',
     systemManagement: '系统管理',
     systemConfig: '系统配置',
   },

@@ -18,13 +18,15 @@ export default {
   // Navigation Menu
   menu: {
     dashboard: 'Dashboard',
-    embyManagement: 'Emby Management',
     embyConfig: 'Emby Config',
     scanTools: 'Scan Tools',
     mediaScan: 'Media Scan',
     scrapeAnomaly: 'Scrape Anomaly',
     duplicateMedia: 'Duplicate Media',
     episodeMapping: 'Episode Mapping',
+    tmdbCache: 'TMDB Cache',
+    symediaManagement: 'Symedia',
+    configRefresh: 'Config Refresh',
     systemManagement: 'System',
     systemConfig: 'System Config',
   },

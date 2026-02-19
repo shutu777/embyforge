@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"embyforge/internal/migration"
+	"embyforge/internal/util"
 
 	"golang.org/x/crypto/bcrypt"
 	"github.com/glebarez/sqlite"
@@ -53,6 +54,9 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 	// 创建初始管理员账户（如果不存在）
 	seedAdmin(db)
 
+	// 自动加密明文敏感数据
+	encryptPlaintextData(db)
+
 	return db, nil
 }
 
@@ -81,4 +85,74 @@ func seedAdmin(db *gorm.DB) {
 	}
 
 	log.Println("👤 已创建默认管理员账户 (admin/admin)")
+}
+
+// encryptPlaintextData 自动加密所有明文存储的敏感数据
+func encryptPlaintextData(db *gorm.DB) {
+	// 加密 SystemConfig 中的敏感配置
+	var configs []SystemConfig
+	if err := db.Find(&configs).Error; err != nil {
+		log.Printf("⚠️  查询系统配置失败: %v", err)
+		return
+	}
+
+	encryptedCount := 0
+	for _, config := range configs {
+		// 检查是否是需要加密的键
+		if encryptedKeys[config.Key] && config.Value != "" {
+			// 尝试解密，如果失败说明是明文
+			if _, err := util.Decrypt(config.Value); err != nil {
+				// 是明文，需要加密
+				// 直接保存会触发 BeforeSave 钩子自动加密
+				if err := db.Save(&config).Error; err != nil {
+					log.Printf("⚠️  加密配置 %s 失败: %v", config.Key, err)
+				} else {
+					encryptedCount++
+				}
+			}
+		}
+	}
+
+	if encryptedCount > 0 {
+		log.Printf("🔐 已自动加密 %d 个明文配置", encryptedCount)
+	}
+
+	// 加密 WebhookConfig 中的敏感字段
+	var webhookConfigs []WebhookConfig
+	if err := db.Find(&webhookConfigs).Error; err != nil {
+		log.Printf("⚠️  查询 Webhook 配置失败: %v", err)
+		return
+	}
+
+	webhookEncryptedCount := 0
+	for _, config := range webhookConfigs {
+		needSave := false
+
+		// 检查 AuthToken 是否需要加密
+		if config.AuthToken != "" {
+			if _, err := util.Decrypt(config.AuthToken); err != nil {
+				needSave = true
+			}
+		}
+
+		// 检查 Secret 是否需要加密
+		if config.Secret != "" {
+			if _, err := util.Decrypt(config.Secret); err != nil {
+				needSave = true
+			}
+		}
+
+		if needSave {
+			// 直接保存会触发 BeforeSave 钩子自动加密
+			if err := db.Save(&config).Error; err != nil {
+				log.Printf("⚠️  加密 Webhook 配置失败: %v", err)
+			} else {
+				webhookEncryptedCount++
+			}
+		}
+	}
+
+	if webhookEncryptedCount > 0 {
+		log.Printf("🔐 已自动加密 %d 个 Webhook 配置", webhookEncryptedCount)
+	}
 }

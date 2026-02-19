@@ -403,3 +403,68 @@ func (c *Client) DeleteItem(ctx context.Context, itemID string) error {
 
 	return nil
 }
+
+// RemoteImageInfo 远程图片信息
+type RemoteImageInfo struct {
+	ProviderName string  `json:"ProviderName"`
+	URL          string  `json:"Url"`
+	ThumbnailURL string  `json:"ThumbnailUrl"`
+	Height       int     `json:"Height"`
+	Width        int     `json:"Width"`
+	Language     string  `json:"Language"`
+	Type         string  `json:"Type"` // Primary, Backdrop, etc.
+	RatingType   string  `json:"RatingType"`
+	CommunityRating float64 `json:"CommunityRating"`
+}
+
+// RemoteImagesResponse 远程图片列表响应
+type RemoteImagesResponse struct {
+	Images       []RemoteImageInfo `json:"Images"`
+	TotalRecordCount int           `json:"TotalRecordCount"`
+	Providers    []string          `json:"Providers"`
+}
+
+// GetRemoteImages 获取媒体项的远程图片列表
+// Emby API: GET /emby/Items/{itemId}/RemoteImages
+func (c *Client) GetRemoteImages(ctx context.Context, itemID string, imageType string) (*RemoteImagesResponse, error) {
+	path := fmt.Sprintf("/emby/Items/%s/RemoteImages?Type=%s", itemID, imageType)
+
+	body, err := c.doRequestWithContext(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("获取远程图片失败: %w", err)
+	}
+
+	var resp RemoteImagesResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("解析远程图片响应失败: %w", err)
+	}
+
+	return &resp, nil
+}
+
+// DownloadRemoteImage 下载并设置远程图片为媒体项的封面
+// Emby API: POST /emby/Items/{itemId}/RemoteImages/Download
+func (c *Client) DownloadRemoteImage(ctx context.Context, itemID string, imageType string, imageURL string, providerName string) error {
+	url := fmt.Sprintf("%s/emby/Items/%s/RemoteImages/Download?Type=%s&ImageUrl=%s&ProviderName=%s",
+		c.baseURL(), itemID, imageType, imageURL, providerName)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
+	if err != nil {
+		return fmt.Errorf("创建下载图片请求失败: %w", err)
+	}
+
+	req.Header.Set("X-Emby-Token", c.APIKey)
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("下载图片请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("Emby 下载图片失败，状态码 %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}

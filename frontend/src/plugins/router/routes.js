@@ -45,6 +45,11 @@ export const routes = [
         component: () => import('@/pages/system-config.vue'),
       },
       {
+        path: 'symedia-config',
+        name: 'symedia-config',
+        component: () => import('@/pages/symedia-config.vue'),
+      },
+      {
         path: 'profile',
         name: 'profile',
         component: () => import('@/pages/profile.vue'),

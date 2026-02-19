@@ -699,6 +699,212 @@ func (h *ScanHandler) CleanupScrapeAnomalies(c *gin.Context) {
 	})
 }
 
+// BatchFindPosters POST /api/cleanup/batch-find-posters - 批量查找并设置封面
+// 接收前端传来的待处理 emby_item_id 列表，自动查找并设置第一个可用的海报
+func (h *ScanHandler) BatchFindPosters(c *gin.Context) {
+	var req struct {
+		Items []string `json:"items"` // 要处理的 emby_item_id 列表
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.Items) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "请选择要处理的条目",
+		})
+		return
+	}
+
+	log.Printf("🖼️  开始批量查找封面，共 %d 个...", len(req.Items))
+
+	client, err := h.getEmbyClient()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "请先配置 Emby 服务器连接信息",
+		})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Minute)
+	defer cancel()
+
+	successCount := 0
+	failedCount := 0
+	noImageCount := 0
+	var failedItems []string
+	var noImageItems []string
+
+	// 查询这些条目的详细信息（用于日志）
+	var items []model.ScrapeAnomaly
+	h.DB.Where("emby_item_id IN ?", req.Items).Find(&items)
+
+	// 构建 emby_item_id -> ScrapeAnomaly 映射
+	itemMap := make(map[string]model.ScrapeAnomaly)
+	for _, item := range items {
+		itemMap[item.EmbyItemID] = item
+	}
+
+	for _, embyID := range req.Items {
+		item, exists := itemMap[embyID]
+		itemName := embyID
+		if exists {
+			itemName = item.Name
+		}
+
+		// 获取远程图片列表
+		remoteImages, err := client.GetRemoteImages(ctx, embyID, "Primary")
+		if err != nil {
+			log.Printf("❌ 获取远程图片失败 [%s] %s: %v", embyID, itemName, err)
+			failedCount++
+			failedItems = append(failedItems, embyID)
+			continue
+		}
+
+		// 检查是否有可用的图片
+		if len(remoteImages.Images) == 0 {
+			log.Printf("⚠️  未找到可用封面 [%s] %s", embyID, itemName)
+			noImageCount++
+			noImageItems = append(noImageItems, embyID)
+			continue
+		}
+
+		// 选择第一个图片
+		firstImage := remoteImages.Images[0]
+
+		// 下载并设置封面
+		err = client.DownloadRemoteImage(ctx, embyID, "Primary", firstImage.URL, firstImage.ProviderName)
+		if err != nil {
+			log.Printf("❌ 下载封面失败 [%s] %s: %v", embyID, itemName, err)
+			failedCount++
+			failedItems = append(failedItems, embyID)
+			continue
+		}
+
+		log.Printf("✅ 已设置封面 [%s] %s (来源: %s)", embyID, itemName, firstImage.ProviderName)
+		successCount++
+
+		// 更新数据库中的 missing_poster 标记
+		if exists {
+			h.DB.Model(&model.ScrapeAnomaly{}).
+				Where("emby_item_id = ?", embyID).
+				Update("missing_poster", false)
+		}
+
+		// 更新缓存中的 has_poster 标记
+		h.DB.Model(&model.MediaCache{}).
+			Where("emby_item_id = ?", embyID).
+			Update("has_poster", true)
+	}
+
+	log.Printf("✅ 批量查找封面完成: 成功 %d 个, 失败 %d 个, 无可用图片 %d 个", successCount, failedCount, noImageCount)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "批量查找封面完成",
+		"data": gin.H{
+			"success_count":   successCount,
+			"failed_count":    failedCount,
+			"no_image_count":  noImageCount,
+			"failed_items":    failedItems,
+			"no_image_items":  noImageItems,
+		},
+	})
+}
+
+// FindSinglePoster POST /api/cleanup/find-single-poster - 单个查找并设置封面
+// 接收单个 emby_item_id，自动查找并设置第一个可用的海报
+func (h *ScanHandler) FindSinglePoster(c *gin.Context) {
+	var req struct {
+		ItemID string `json:"item_id" binding:"required"` // 要处理的 emby_item_id
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "请提供有效的条目ID",
+		})
+		return
+	}
+
+	log.Printf("🖼️  开始查找封面: %s", req.ItemID)
+
+	client, err := h.getEmbyClient()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "请先配置 Emby 服务器连接信息",
+		})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 1*time.Minute)
+	defer cancel()
+
+	// 查询条目信息（用于日志）
+	var item model.ScrapeAnomaly
+	h.DB.Where("emby_item_id = ?", req.ItemID).First(&item)
+	itemName := req.ItemID
+	if item.ID != 0 {
+		itemName = item.Name
+	}
+
+	// 获取远程图片列表
+	remoteImages, err := client.GetRemoteImages(ctx, req.ItemID, "Primary")
+	if err != nil {
+		log.Printf("❌ 获取远程图片失败 [%s] %s: %v", req.ItemID, itemName, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "获取远程图片失败",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	// 检查是否有可用的图片
+	if len(remoteImages.Images) == 0 {
+		log.Printf("⚠️  未找到可用封面 [%s] %s", req.ItemID, itemName)
+		c.JSON(http.StatusNotFound, gin.H{
+			"code":    404,
+			"message": "未找到可用的封面图片",
+		})
+		return
+	}
+
+	// 选择第一个图片
+	firstImage := remoteImages.Images[0]
+
+	// 下载并设置封面
+	err = client.DownloadRemoteImage(ctx, req.ItemID, "Primary", firstImage.URL, firstImage.ProviderName)
+	if err != nil {
+		log.Printf("❌ 下载封面失败 [%s] %s: %v", req.ItemID, itemName, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "下载封面失败",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	log.Printf("✅ 已设置封面 [%s] %s (来源: %s)", req.ItemID, itemName, firstImage.ProviderName)
+
+	// 更新数据库中的 missing_poster 标记
+	if item.ID != 0 {
+		h.DB.Model(&model.ScrapeAnomaly{}).
+			Where("emby_item_id = ?", req.ItemID).
+			Update("missing_poster", false)
+	}
+
+	// 更新缓存中的 has_poster 标记
+	h.DB.Model(&model.MediaCache{}).
+		Where("emby_item_id = ?", req.ItemID).
+		Update("has_poster", true)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "封面设置成功",
+		"data": gin.H{
+			"item_id":       req.ItemID,
+			"provider_name": firstImage.ProviderName,
+		},
+	})
+}
+
 // GetAnalysisStatus 获取各分析模块的最后分析时间和异常数量
 func (h *ScanHandler) GetAnalysisStatus(c *gin.Context) {
 	type moduleStatus struct {

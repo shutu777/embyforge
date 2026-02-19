@@ -136,21 +136,33 @@ func main() {
 	systemConfigHandler := handler.NewSystemConfigHandler(db)
 	logsHandler := handler.NewLogsHandler(logBuffer)
 	tmdbCacheHandler := handler.NewTmdbCacheHandler(db)
+	symediaHandler := handler.NewSymediaHandler(db, cfg.JWTSecret)
+	webhookHandler := handler.NewWebhookHandler(db, symediaHandler)
 
 	// 初始化 Gin 引擎
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(ginLogger(accessLog, logBuffer))
 
-	// 静态文件服务：头像等上传文件
+	// 确保上传目录存在（在 Docker 中由 Nginx 提供静态文件服务）
 	uploadsDir := filepath.Join(filepath.Dir(cfg.DBPath), "uploads")
 	os.MkdirAll(uploadsDir, 0755)
-	r.Static("/uploads", uploadsDir)
+
+	// 创建Webhook速率限制器：每分钟最多10个请求
+	webhookRateLimiter := middleware.NewRateLimiter(10, time.Minute)
 
 	// 公开路由（无需认证）
 	public := r.Group("/api")
 	{
 		public.POST("/auth/login", authHandler.Login)
+		// GitHub Webhook 公开端点（带速率限制）
+		// 支持动态路径参数，但实际不使用（为了兼容生成的 URL）
+		public.POST("/webhook/github", 
+			middleware.RateLimitMiddleware(webhookRateLimiter),
+			webhookHandler.HandleGitHubWebhook)
+		public.POST("/webhook/github/:id", 
+			middleware.RateLimitMiddleware(webhookRateLimiter),
+			webhookHandler.HandleGitHubWebhook)
 	}
 
 	// 受保护路由（需要 JWT 认证）
@@ -189,6 +201,8 @@ func main() {
 		protected.POST("/cleanup/duplicate-media", scanHandler.CleanupDuplicateMedia)
 		protected.GET("/cleanup/duplicate-media/preview", scanHandler.PreviewDuplicateCleanup)
 		protected.POST("/cleanup/scrape-anomaly", scanHandler.CleanupScrapeAnomalies)
+		protected.POST("/cleanup/batch-find-posters", scanHandler.BatchFindPosters)
+		protected.POST("/cleanup/find-single-poster", scanHandler.FindSinglePoster)
 
 		protected.GET("/scan/scrape-anomaly", scanHandler.GetScrapeAnomalies)
 		protected.GET("/scan/duplicate-media", scanHandler.GetDuplicateMedia)
@@ -201,6 +215,13 @@ func main() {
 		protected.DELETE("/tmdb-cache/:id", tmdbCacheHandler.DeleteTmdbCache)
 		protected.DELETE("/tmdb-cache/show/:tmdbId", tmdbCacheHandler.DeleteTmdbCacheByShow)
 		protected.POST("/tmdb-cache/clear", tmdbCacheHandler.ClearTmdbCache)
+
+		// Symedia 配置管理
+		protected.GET("/symedia/config", symediaHandler.GetConfigs)
+		protected.POST("/symedia/save-config", symediaHandler.SaveConfig)
+		protected.POST("/symedia/refresh", symediaHandler.ManualRefresh)
+		protected.POST("/symedia/github-config-save", symediaHandler.SaveGithubConfigOnly)
+		protected.POST("/symedia/github-config", symediaHandler.SaveGithubConfig)
 	}
 
 	// 启动服务

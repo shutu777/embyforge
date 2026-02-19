@@ -27,6 +27,15 @@ const cleanResult = ref(null)
 const showCleanDialog = ref(false)
 const selectedItems = ref([])
 
+// 批量查找封面状态
+const findingPosters = ref(false)
+const findPostersResult = ref(null)
+const showFindPostersDialog = ref(false)
+const selectedPosterItems = ref([])
+
+// 单个查找封面状态
+const findingSinglePoster = ref({}) // 记录每个条目的loading状态
+
 // Emby 配置（用于构建跳转链接）
 const embyConfig = ref(null)
 
@@ -54,11 +63,11 @@ const anomalyCount = computed(() => {
 
 // 表格列定义
 const headers = [
-  { title: '媒体名称', key: 'name', width: '350px' },
+  { title: '媒体名称', key: 'name', width: '300px' },
   { title: '类型', key: 'type', width: '100px' },
   { title: '缺失项', key: 'missing', width: '100px' },
   { title: '路径', key: 'path' },
-  { title: '操作', key: 'actions', width: '120px' },
+  { title: '操作', key: 'actions', width: '220px' },
 ]
 
 // 跳转到 Emby 媒体详情页
@@ -196,6 +205,77 @@ async function executeCleanup() {
   }
 }
 
+// 打开批量查找封面对话框
+function openFindPostersDialog() {
+  showFindPostersDialog.value = true
+  // 默认选择所有缺少封面的条目
+  selectedPosterItems.value = anomalies.value
+    .filter(i => i.missing_poster)
+    .map(i => i.emby_item_id)
+}
+
+// 全选/取消全选封面查找
+function toggleSelectAllPosters() {
+  const posterIds = anomalies.value
+    .filter(i => i.missing_poster)
+    .map(i => i.emby_item_id)
+  if (selectedPosterItems.value.length === posterIds.length) {
+    selectedPosterItems.value = []
+  } else {
+    selectedPosterItems.value = [...posterIds]
+  }
+}
+
+// 执行批量查找封面
+async function executeFindPosters() {
+  if (selectedPosterItems.value.length === 0) {
+    snackbar.error('请至少选择一个要处理的条目')
+    return
+  }
+  showFindPostersDialog.value = false
+  findingPosters.value = true
+  findPostersResult.value = null
+  try {
+    const { data } = await api.post('/cleanup/batch-find-posters', {
+      items: selectedPosterItems.value,
+    })
+    findPostersResult.value = data.data
+    const { success_count, failed_count, no_image_count } = data.data
+    let message = `查找完成：成功 ${success_count} 个`
+    if (no_image_count > 0) message += `，无可用图片 ${no_image_count} 个`
+    if (failed_count > 0) message += `，失败 ${failed_count} 个`
+    snackbar.success(message)
+    page.value = 1
+    await Promise.all([fetchAnomalies(), fetchAnalysisStatus()])
+  } catch (e) {
+    findPostersResult.value = { error: e.response?.data?.message || '查找失败' }
+    snackbar.error(e.response?.data?.message || '查找失败')
+  } finally {
+    findingPosters.value = false
+  }
+}
+
+// 单个查找封面
+async function findSinglePoster(item) {
+  findingSinglePoster.value[item.emby_item_id] = true
+  try {
+    const { data } = await api.post('/cleanup/find-single-poster', {
+      item_id: item.emby_item_id,
+    })
+    snackbar.success(`已设置封面 (来源: ${data.data.provider_name})`)
+    // 刷新列表
+    await fetchAnomalies()
+  } catch (e) {
+    if (e.response?.status === 404) {
+      snackbar.error('未找到可用的封面图片')
+    } else {
+      snackbar.error(e.response?.data?.message || '查找封面失败')
+    }
+  } finally {
+    delete findingSinglePoster.value[item.emby_item_id]
+  }
+}
+
 onMounted(async () => {
   await fetchCacheStatus()
   await Promise.all([fetchAnomalies(), fetchAnalysisStatus(), fetchEmbyConfig()])
@@ -285,11 +365,24 @@ onMounted(async () => {
             <VBtn
               color="primary"
               :loading="analyzing"
-              :disabled="analyzing || cleaning"
+              :disabled="analyzing || cleaning || findingPosters"
               @click="startAnalyze"
             >
               <VIcon icon="ri-play-fill" class="me-1" />
               {{ analyzing ? '分析中...' : '开始分析' }}
+            </VBtn>
+
+            <VBtn
+              v-if="anomalyCount > 0 && anomalies.some(i => i.missing_poster)"
+              color="success"
+              variant="tonal"
+              class="ms-3"
+              :loading="findingPosters"
+              :disabled="analyzing || cleaning || findingPosters"
+              @click="openFindPostersDialog"
+            >
+              <VIcon icon="ri-image-add-line" class="me-1" />
+              {{ findingPosters ? '查找中...' : '批量查找封面' }}
             </VBtn>
 
             <VBtn
@@ -298,7 +391,7 @@ onMounted(async () => {
               variant="tonal"
               class="ms-3"
               :loading="cleaning"
-              :disabled="analyzing || cleaning"
+              :disabled="analyzing || cleaning || findingPosters"
               @click="openCleanDialog"
             >
               <VIcon icon="ri-delete-bin-line" class="me-1" />
@@ -361,6 +454,39 @@ onMounted(async () => {
                 </div>
               </VCardText>
             </VCard>
+
+            <!-- 查找封面结果 -->
+            <VCard v-if="findPostersResult && !findPostersResult.error" variant="tonal" color="success" class="mt-4">
+              <VCardText class="d-flex align-center pa-4">
+                <VAvatar color="success" variant="tonal" size="38" rounded="lg" class="me-3">
+                  <VIcon icon="ri-image-add-line" size="20" />
+                </VAvatar>
+                <div>
+                  <div class="text-body-2 font-weight-semibold">查找封面完成</div>
+                  <div class="text-caption text-medium-emphasis">
+                    成功 {{ findPostersResult.success_count }} 个
+                    <template v-if="findPostersResult.no_image_count > 0">
+                      ，无可用图片 {{ findPostersResult.no_image_count }} 个
+                    </template>
+                    <template v-if="findPostersResult.failed_count > 0">
+                      ，失败 {{ findPostersResult.failed_count }} 个
+                    </template>
+                  </div>
+                </div>
+              </VCardText>
+            </VCard>
+
+            <VCard v-if="findPostersResult && findPostersResult.error" variant="tonal" color="error" class="mt-4">
+              <VCardText class="d-flex align-center pa-4">
+                <VAvatar color="error" variant="tonal" size="38" rounded="lg" class="me-3">
+                  <VIcon icon="ri-error-warning-line" size="20" />
+                </VAvatar>
+                <div>
+                  <div class="text-body-2 font-weight-semibold">查找封面失败</div>
+                  <div class="text-caption text-medium-emphasis">{{ findPostersResult.error }}</div>
+                </div>
+              </VCardText>
+            </VCard>
           </VCardText>
         </VCard>
       </template>
@@ -402,15 +528,28 @@ onMounted(async () => {
                 </td>
                 <td>{{ item.path }}</td>
                 <td class="actions-cell">
-                  <VBtn
-                    size="small"
-                    variant="text"
-                    color="primary"
-                    @click="openInEmby(item)"
-                  >
-                    <VIcon icon="ri-external-link-line" size="14" class="me-1" />
-                    Emby
-                  </VBtn>
+                  <div class="d-flex align-center gap-1">
+                    <VBtn
+                      v-if="item.missing_poster"
+                      size="small"
+                      variant="text"
+                      color="success"
+                      :loading="findingSinglePoster[item.emby_item_id]"
+                      @click="findSinglePoster(item)"
+                    >
+                      <VIcon icon="ri-image-add-line" size="14" class="me-1" />
+                      查找封面
+                    </VBtn>
+                    <VBtn
+                      size="small"
+                      variant="text"
+                      color="primary"
+                      @click="openInEmby(item)"
+                    >
+                      <VIcon icon="ri-external-link-line" size="14" class="me-1" />
+                      Emby
+                    </VBtn>
+                  </div>
                 </td>
               </tr>
             </tbody>
@@ -532,6 +671,110 @@ onMounted(async () => {
           >
             <VIcon icon="ri-delete-bin-line" class="me-1" />
             确认删除 ({{ selectedItems.length }})
+          </VBtn>
+        </VCardActions>
+      </VCard>
+    </VDialog>
+
+    <!-- 批量查找封面对话框 -->
+    <VDialog v-model="showFindPostersDialog" max-width="1600" scrollable transition="none">
+      <VCard class="clean-dialog-card" data-no-hover>
+        <VCardTitle class="d-flex align-center pa-5 pb-4">
+          <VAvatar color="success" variant="tonal" size="36" rounded="lg" class="me-3">
+            <VIcon icon="ri-image-add-line" size="18" />
+          </VAvatar>
+          <div>
+            <div class="text-body-1 font-weight-semibold">批量查找封面</div>
+            <div class="text-caption text-medium-emphasis">自动查找并设置第一个可用的海报图片</div>
+          </div>
+        </VCardTitle>
+
+        <VDivider />
+
+        <VCardText class="pa-0" style="max-height: 80vh;">
+          <template v-if="anomalies.filter(i => i.missing_poster).length > 0">
+            <!-- 工具栏 -->
+            <div class="clean-toolbar pa-4">
+              <div class="d-flex align-center justify-space-between">
+                <div class="d-flex align-center">
+                  <VCheckbox
+                    :model-value="selectedPosterItems.length === anomalies.filter(i => i.missing_poster).length"
+                    :indeterminate="selectedPosterItems.length > 0 && selectedPosterItems.length < anomalies.filter(i => i.missing_poster).length"
+                    label="全选当前页"
+                    density="compact"
+                    hide-details
+                    @click="toggleSelectAllPosters"
+                  />
+                </div>
+                <div class="d-flex align-center gap-3">
+                  <VChip size="small" variant="tonal" color="default">
+                    缺封面 {{ anomalies.filter(i => i.missing_poster).length }} 条
+                  </VChip>
+                  <VChip size="small" variant="tonal" :color="selectedPosterItems.length > 0 ? 'success' : 'default'">
+                    已选 {{ selectedPosterItems.length }} 项
+                  </VChip>
+                </div>
+              </div>
+              <div class="text-caption text-medium-emphasis mt-2">
+                将自动从 TMDB 等来源查找并下载第一个可用的海报图片
+              </div>
+            </div>
+
+            <VDivider />
+
+            <!-- 条目列表 -->
+            <div class="preview-items">
+              <div
+                v-for="item in anomalies.filter(i => i.missing_poster)"
+                :key="item.emby_item_id"
+                class="preview-item d-flex align-center px-5 py-3"
+                :class="{ 'item-selected': selectedPosterItems.includes(item.emby_item_id) }"
+              >
+                <VCheckbox
+                  :model-value="selectedPosterItems.includes(item.emby_item_id)"
+                  density="compact"
+                  hide-details
+                  class="me-3 flex-shrink-0"
+                  @update:model-value="val => {
+                    if (val) selectedPosterItems.push(item.emby_item_id)
+                    else selectedPosterItems = selectedPosterItems.filter(id => id !== item.emby_item_id)
+                  }"
+                />
+                <VChip
+                  size="x-small"
+                  :color="item.type === 'Movie' ? 'primary' : 'info'"
+                  variant="tonal"
+                  class="me-3 flex-shrink-0"
+                  style="min-width: 42px; justify-content: center;"
+                >
+                  {{ item.type === 'Movie' ? '电影' : '剧集' }}
+                </VChip>
+                <div class="flex-grow-1 overflow-hidden">
+                  <div class="text-body-2">{{ item.name }}</div>
+                  <div class="text-caption text-medium-emphasis">{{ item.path }}</div>
+                </div>
+                <VChip size="x-small" color="error" variant="flat" class="flex-shrink-0 ms-4">缺封面</VChip>
+              </div>
+            </div>
+          </template>
+
+          <div v-else class="text-center pa-12 text-body-2 text-medium-emphasis">
+            当前页没有缺少封面的条目
+          </div>
+        </VCardText>
+
+        <VDivider />
+
+        <VCardActions class="pa-4 px-5">
+          <VSpacer />
+          <VBtn variant="text" @click="showFindPostersDialog = false">取消</VBtn>
+          <VBtn
+            color="success"
+            :disabled="selectedPosterItems.length === 0"
+            @click="executeFindPosters"
+          >
+            <VIcon icon="ri-image-add-line" class="me-1" />
+            开始查找 ({{ selectedPosterItems.length }})
           </VBtn>
         </VCardActions>
       </VCard>

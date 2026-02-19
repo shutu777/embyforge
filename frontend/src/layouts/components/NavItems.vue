@@ -16,20 +16,6 @@ const { t } = useI18n()
     }"
   />
 
-  <!-- 👉 Emby 管理 -->
-  <VerticalNavSectionTitle
-    :item="{
-      heading: t('menu.embyManagement'),
-    }"
-  />
-  <VerticalNavLink
-    :item="{
-      title: t('menu.embyConfig'),
-      icon: 'ri-settings-3-line',
-      to: '/emby-config',
-    }"
-  />
-
   <!-- 👉 扫描工具 -->
   <VerticalNavSectionTitle
     :item="{
@@ -72,10 +58,31 @@ const { t } = useI18n()
     }"
   />
 
+  <!-- 👉 Symedia管理 -->
+  <VerticalNavSectionTitle
+    :item="{
+      heading: t('menu.symediaManagement'),
+    }"
+  />
+  <VerticalNavLink
+    :item="{
+      title: t('menu.configRefresh'),
+      icon: 'ri-refresh-line',
+      to: '/symedia-config',
+    }"
+  />
+
   <!-- 👉 系统管理 -->
   <VerticalNavSectionTitle
     :item="{
       heading: t('menu.systemManagement'),
+    }"
+  />
+  <VerticalNavLink
+    :item="{
+      title: t('menu.embyConfig'),
+      icon: 'ri-settings-3-line',
+      to: '/emby-config',
     }"
   />
   <VerticalNavLink
