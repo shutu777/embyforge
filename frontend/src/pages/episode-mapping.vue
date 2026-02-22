@@ -222,12 +222,12 @@ onMounted(async () => {
       <template v-else>
         <!-- 统计卡片 -->
         <VRow class="mb-4">
-          <VCol cols="12" sm="4">
-            <VCard class="stat-card" style="height: 120px;">
-              <VCardText class="d-flex align-center justify-space-between h-100 pa-5">
-                <div>
+          <VCol cols="6" sm="4">
+            <VCard class="stat-card stat-card-responsive">
+              <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
+                <div class="stat-text-wrap">
                   <div class="text-body-2 text-medium-emphasis mb-1">异常节目数</div>
-                  <div class="text-h4 font-weight-bold">{{ anomalyCount.toLocaleString() }}</div>
+                  <div class="text-h4 font-weight-bold stat-number">{{ anomalyCount.toLocaleString() }}</div>
                 </div>
                 <div class="stat-icon" style="background: #8b5cf618;">
                   <VIcon icon="ri-error-warning-fill" color="#8b5cf6" size="24" />
@@ -235,12 +235,12 @@ onMounted(async () => {
               </VCardText>
             </VCard>
           </VCol>
-          <VCol cols="12" sm="4">
-            <VCard class="stat-card" style="height: 120px;">
-              <VCardText class="d-flex align-center justify-space-between h-100 pa-5">
-                <div>
+          <VCol cols="6" sm="4">
+            <VCard class="stat-card stat-card-responsive">
+              <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
+                <div class="stat-text-wrap">
                   <div class="text-body-2 text-medium-emphasis mb-1">缓存条目</div>
-                  <div class="text-h4 font-weight-bold">{{ cacheStatus.total_items.toLocaleString() }}</div>
+                  <div class="text-h4 font-weight-bold stat-number">{{ cacheStatus.total_items.toLocaleString() }}</div>
                 </div>
                 <div class="stat-icon" style="background: #6366f118;">
                   <VIcon icon="ri-film-fill" color="#6366f1" size="24" />
@@ -249,9 +249,9 @@ onMounted(async () => {
             </VCard>
           </VCol>
           <VCol cols="12" sm="4">
-            <VCard class="stat-card" style="height: 120px;">
-              <VCardText class="d-flex align-center justify-space-between h-100 pa-5">
-                <div>
+            <VCard class="stat-card stat-card-responsive">
+              <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
+                <div class="stat-text-wrap">
                   <div class="text-body-2 text-medium-emphasis mb-1">最后分析</div>
                   <div class="text-h6 font-weight-bold">{{ formatTime(lastAnalyzedAt) }}</div>
                 </div>
@@ -399,7 +399,7 @@ onMounted(async () => {
                   </div>
                 </VExpansionPanelTitle>
                 <VExpansionPanelText>
-                  <div class="d-flex justify-end mb-2 gap-2">
+                  <div class="d-flex flex-wrap justify-end mb-2 gap-2 action-links">
                     <VBtn size="small" variant="text" color="info" @click.stop="openInTmdb(group.tmdb_id)">
                       <VIcon icon="ri-movie-2-line" size="14" class="me-1" />
                       在 TMDB 中查看
@@ -411,8 +411,8 @@ onMounted(async () => {
                   </div>
                   <!-- 移动端：卡片布局 -->
                   <div v-if="smAndDown" class="mobile-items">
-                    <div v-for="season in group.seasons" :key="season.id" class="mobile-item pa-3">
-                      <div class="d-flex align-center justify-space-between mb-1">
+                    <div v-for="season in group.seasons" :key="season.id" class="mobile-item pa-2">
+                      <div class="d-flex align-center justify-space-between">
                         <span class="text-body-2 font-weight-medium">Season {{ season.season_number }}</span>
                         <VChip
                           size="x-small"
@@ -480,6 +480,16 @@ onMounted(async () => {
   border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
 }
 
+.stat-card-responsive {
+  height: 120px;
+}
+
+.stat-text-wrap {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
 .content-card {
   border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   transform: none !important;
@@ -494,6 +504,7 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  margin-inline-start: 8px;
 }
 
 .h-100 {
@@ -533,6 +544,41 @@ onMounted(async () => {
     .panel-title-name {
       white-space: normal;
       word-break: break-all;
+    }
+  }
+
+  .action-links {
+    justify-content: flex-start !important;
+    margin-bottom: 4px !important;
+
+    .v-btn {
+      font-size: 0.75rem;
+      padding: 0 6px !important;
+      min-width: 0;
+    }
+  }
+
+  .stat-card-responsive {
+    height: auto;
+    min-height: 90px;
+  }
+
+  .stat-card-text {
+    padding: 10px !important;
+  }
+
+  .stat-number {
+    font-size: 1.15rem !important;
+  }
+
+  .stat-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    margin-inline-start: 4px;
+
+    .v-icon {
+      font-size: 16px !important;
     }
   }
 }

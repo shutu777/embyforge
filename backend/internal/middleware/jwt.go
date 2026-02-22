@@ -16,14 +16,13 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-// GenerateToken 生成 JWT 令牌
+// GenerateToken 生成 JWT 令牌（不设过期时间，密码修改时通过更换 secret 使旧 token 失效）
 func GenerateToken(userID uint, username string, secret string) (string, error) {
 	claims := Claims{
 		UserID:   userID,
 		Username: username,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			IssuedAt: jwt.NewNumericDate(time.Now()),
 		},
 	}
 

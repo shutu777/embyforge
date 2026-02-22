@@ -96,6 +96,8 @@ type CacheHandler struct {
 
 	syncMu     sync.Mutex
 	activeSync *activeSync
+
+	wsListener *emby.LibraryWatcher // Emby 媒体库变更轮询监听器
 }
 
 // NewCacheHandler 创建缓存处理器
@@ -105,6 +107,52 @@ func NewCacheHandler(db *gorm.DB, jwtSecret string) *CacheHandler {
 		JWTSecret:    jwtSecret,
 		CacheService: service.NewCacheService(db),
 	}
+}
+
+// StartWSListener 启动 Emby 媒体库变更轮询监听
+// 定时检查 Emby 媒体库变更（新增/修改/删除），自动同步到本地缓存
+func (h *CacheHandler) StartWSListener() {
+	if h.wsListener != nil && h.wsListener.IsRunning() {
+		return
+	}
+
+	client, err := h.getEmbyClient()
+	if err != nil {
+		log.Printf("⚠️ 无法启动媒体库监听：Emby 未配置")
+		return
+	}
+
+	// 获取数据库中最后同步时间，作为轮询起点
+	var lastSyncAt time.Time
+	status, err := h.CacheService.GetCacheStatus()
+	if err == nil && status.LastSyncAt != nil {
+		lastSyncAt = *status.LastSyncAt
+	}
+
+	h.wsListener = emby.NewLibraryWatcher(client, func(items []emby.MediaItem, removed []string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		c, err := h.getEmbyClient()
+		if err != nil {
+			log.Printf("⚠️ 实时同步获取 Emby 客户端失败: %v", err)
+			return
+		}
+		h.CacheService.HandleLibraryChanged(ctx, c, items, removed)
+	}, 30*time.Second, lastSyncAt)
+	h.wsListener.Start()
+}
+
+// StopWSListener 停止 Emby WebSocket 监听
+func (h *CacheHandler) StopWSListener() {
+	if h.wsListener != nil {
+		h.wsListener.Stop()
+		h.wsListener = nil
+	}
+}
+
+// GetWSListenerStatus 获取 WebSocket 监听器状态
+func (h *CacheHandler) GetWSListenerStatus() bool {
+	return h.wsListener != nil && h.wsListener.IsRunning()
 }
 
 // getEmbyClient 从数据库获取 Emby 配置并创建客户端
@@ -117,8 +165,9 @@ func (h *CacheHandler) getEmbyClient() (*emby.Client, error) {
 }
 
 // startSync 启动后台同步任务（如果没有正在运行的同步）
+// fullSync=true 时强制全量同步，否则尝试增量同步
 // 返回 activeSync 和是否是新启动的
-func (h *CacheHandler) startSync(client *emby.Client) (*activeSync, bool) {
+func (h *CacheHandler) startSync(client *emby.Client, fullSync bool) (*activeSync, bool) {
 	h.syncMu.Lock()
 	defer h.syncMu.Unlock()
 
@@ -139,8 +188,24 @@ func (h *CacheHandler) startSync(client *emby.Client) (*activeSync, bool) {
 
 	// 启动同步 goroutine
 	go func() {
-		h.CacheService.SyncMediaCacheWithProgress(ctx, client, progressCh)
+		// 通知 watcher 暂停轮询，避免冲突
+		if h.wsListener != nil {
+			h.wsListener.SetSyncActive(true)
+		}
+
+		if fullSync {
+			log.Printf("🔄 启动全量同步模式")
+			h.CacheService.SyncMediaCacheWithProgress(ctx, client, progressCh)
+		} else {
+			log.Printf("🔄 启动增量同步模式")
+			h.CacheService.IncrementalSyncMediaCacheWithProgress(ctx, client, progressCh)
+		}
 		cancel()
+
+		// 同步结束，恢复轮询
+		if h.wsListener != nil {
+			h.wsListener.SetSyncActive(false)
+		}
 	}()
 
 	// 启动广播 goroutine：从 progressCh 读取事件并广播给所有订阅者
@@ -221,6 +286,7 @@ func (h *CacheHandler) GetCacheStatus(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"data": status,
+		"ws_listening": h.GetWSListenerStatus(),
 	})
 }
 
@@ -277,9 +343,14 @@ func (h *CacheHandler) SyncCacheStream(c *gin.Context) {
 	}
 
 	// 启动或获取已有的同步任务
-	as, isNew := h.startSync(client)
+	fullSync := c.Query("fullSync") == "true"
+	as, isNew := h.startSync(client, fullSync)
 	if isNew {
-		log.Printf("🔄 SSE 触发新同步任务 (用户: %s)", claims.Username)
+		mode := "增量"
+		if fullSync {
+			mode = "全量"
+		}
+		log.Printf("🔄 SSE 触发新%s同步任务 (用户: %s)", mode, claims.Username)
 	} else {
 		log.Printf("🔄 SSE 连接到已有同步任务 (用户: %s)", claims.Username)
 	}

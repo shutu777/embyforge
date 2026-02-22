@@ -40,6 +40,16 @@ export const routes = [
         component: () => import('@/pages/tmdb-cache.vue'),
       },
       {
+        path: 'emby-cache',
+        name: 'emby-cache',
+        component: () => import('@/pages/emby-cache.vue'),
+      },
+      {
+        path: 'quick-delete',
+        name: 'quick-delete',
+        component: () => import('@/pages/quick-delete.vue'),
+      },
+      {
         path: 'system-config',
         name: 'system-config',
         component: () => import('@/pages/system-config.vue'),

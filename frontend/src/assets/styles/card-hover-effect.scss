@@ -39,3 +39,20 @@
     z-index: auto !important;
   }
 }
+
+// 移动端禁用卡片悬浮效果
+@media (max-width: 599.98px) {
+  .v-theme--light .v-card:not([data-no-hover]),
+  .v-theme--dark .v-card:not([data-no-hover]),
+  .v-row .v-col .v-card:not([data-no-hover]),
+  .match-height .v-card:not([data-no-hover]) {
+    will-change: auto !important;
+    cursor: default !important;
+
+    &:hover {
+      transform: none !important;
+      box-shadow: none !important;
+      z-index: auto !important;
+    }
+  }
+}

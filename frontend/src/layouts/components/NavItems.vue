@@ -52,9 +52,30 @@ const { t } = useI18n()
   />
   <VerticalNavLink
     :item="{
+      title: t('menu.quickDelete'),
+      icon: 'ri-delete-bin-line',
+      to: '/quick-delete',
+    }"
+  />
+
+  <!-- 👉 缓存管理 -->
+  <VerticalNavSectionTitle
+    :item="{
+      heading: t('menu.cacheManagement'),
+    }"
+  />
+  <VerticalNavLink
+    :item="{
       title: t('menu.tmdbCache'),
       icon: 'ri-database-2-line',
       to: '/tmdb-cache',
+    }"
+  />
+  <VerticalNavLink
+    :item="{
+      title: t('menu.embyCache'),
+      icon: 'ri-hard-drive-2-line',
+      to: '/emby-cache',
     }"
   />
 

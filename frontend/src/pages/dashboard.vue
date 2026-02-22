@@ -130,9 +130,9 @@ const anomalyChartSeries = computed(() => [{
       <!-- 第一行：统计卡片 -->
       <VRow class="mb-4">
         <VCol v-for="stat in statCards" :key="stat.key" cols="6" sm="6" md="3">
-          <VCard class="dash-card" style="height: 120px;">
+          <VCard class="dash-card dash-stat-card">
             <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
-              <div>
+              <div class="stat-text-wrap">
                 <div class="text-body-2 text-medium-emphasis mb-1">{{ stat.label }}</div>
                 <div class="text-h4 font-weight-bold stat-number">{{ (d[stat.key] || 0).toLocaleString() }}</div>
               </div>
@@ -143,9 +143,9 @@ const anomalyChartSeries = computed(() => [{
           </VCard>
         </VCol>
         <VCol cols="6" sm="6" md="3">
-          <VCard class="dash-card" style="height: 120px;">
+          <VCard class="dash-card dash-stat-card">
             <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
-              <div>
+              <div class="stat-text-wrap">
                 <div class="text-body-2 text-medium-emphasis mb-1">总异常数</div>
                 <div class="text-h4 font-weight-bold stat-number">{{ totalAnomalyCount.toLocaleString() }}</div>
               </div>
@@ -311,6 +311,16 @@ const anomalyChartSeries = computed(() => [{
   }
 }
 
+.dash-stat-card {
+  height: 120px;
+}
+
+.stat-text-wrap {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
 .card-title {
   font-size: 0.875rem !important;
   font-weight: 600;
@@ -327,6 +337,7 @@ const anomalyChartSeries = computed(() => [{
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  margin-inline-start: 8px;
 }
 
 .item-border {
@@ -358,17 +369,39 @@ const anomalyChartSeries = computed(() => [{
 
 // 移动端响应式适配
 @media (max-width: 599.98px) {
+  .dash-card {
+    transition: none !important;
+
+    &:hover {
+      transform: none !important;
+      box-shadow: none !important;
+    }
+  }
+
+  .dash-stat-card {
+    height: auto;
+    min-height: 90px;
+  }
+
   .stat-card-text {
-    padding: 12px !important;
+    padding: 10px !important;
+    flex-wrap: nowrap !important;
   }
 
   .stat-number {
-    font-size: 1.25rem !important;
+    font-size: 1.15rem !important;
+    line-height: 1.3;
   }
 
   .stat-icon {
-    width: 40px;
-    height: 40px;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    margin-inline-start: 4px;
+
+    .v-icon {
+      font-size: 16px !important;
+    }
   }
 }
 

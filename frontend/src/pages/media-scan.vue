@@ -8,10 +8,12 @@ const snackbar = useSnackbar()
 // 缓存状态
 const cacheStatus = ref(null)
 const loadingStatus = ref(false)
+const wsListening = ref(false) // WebSocket 实时监听状态
 
 // 同步状态
 const syncing = ref(false)
 const syncResult = ref(null)
+const fullSync = ref(false) // 全量同步开关
 
 // SSE 进度状态
 const syncProgress = ref(null)
@@ -45,6 +47,7 @@ async function fetchCacheStatus() {
   try {
     const { data } = await api.get('/cache/status')
     cacheStatus.value = data.data
+    wsListening.value = data.ws_listening || false
   } catch (e) {
     console.error('获取缓存状态失败', e)
   } finally {
@@ -76,7 +79,8 @@ function connectSSE() {
   }
 
   const baseURL = import.meta.env.VITE_API_BASE_URL || '/api'
-  eventSource = new EventSource(`${baseURL}/cache/sync/stream?token=${encodeURIComponent(token)}`)
+  const fullSyncParam = fullSync.value ? '&fullSync=true' : ''
+  eventSource = new EventSource(`${baseURL}/cache/sync/stream?token=${encodeURIComponent(token)}${fullSyncParam}`)
 
   eventSource.addEventListener('progress', (e) => {
     try {
@@ -236,15 +240,51 @@ onBeforeUnmount(closeSSE)
             同步前请已使用最新的目录树生成 strm 文件，否则缓存数据可能不准确
           </VAlert>
 
-          <VBtn
-            color="primary"
-            :disabled="syncing"
-            :loading="syncing && !syncProgress"
-            @click="syncMedia"
-          >
-            <VIcon icon="ri-loop-left-line" class="me-1" />
-            {{ syncing ? '同步中...' : '开始同步' }}
-          </VBtn>
+          <div class="d-flex align-center flex-wrap ga-3">
+            <VBtn
+              color="primary"
+              :disabled="syncing"
+              :loading="syncing && !syncProgress"
+              size="default"
+              @click="syncMedia"
+            >
+              <VIcon icon="ri-loop-left-line" class="me-1" />
+              {{ syncing ? '同步中...' : '开始同步' }}
+            </VBtn>
+
+            <div class="sync-mode-group">
+              <button
+                type="button"
+                class="sync-mode-btn"
+                :class="{ active: !fullSync }"
+                :disabled="syncing"
+                @click="fullSync = false"
+              >
+                增量
+              </button>
+              <button
+                type="button"
+                class="sync-mode-btn warn"
+                :class="{ active: fullSync }"
+                :disabled="syncing"
+                @click="fullSync = true"
+              >
+                全量
+              </button>
+            </div>
+          </div>
+
+          <div class="text-caption text-medium-emphasis mt-2">
+            {{ fullSync ? '⚠ 将清空本地缓存并从 Emby 重新拉取所有数据' : 'ℹ 仅同步新增和修改的数据（删除由实时监听处理）' }}
+          </div>
+
+          <!-- 媒体库自动监听状态 -->
+          <div class="d-flex align-center mt-3">
+            <span class="ws-dot" :class="wsListening ? 'online' : 'offline'" />
+            <span class="text-caption" :class="wsListening ? 'text-success' : 'text-medium-emphasis'">
+              {{ wsListening ? '自动监听中 — Emby 媒体库变更每 30 秒自动同步' : '自动监听未启动' }}
+            </span>
+          </div>
 
           <!-- 进度条区域 -->
           <div v-if="syncing && syncProgress" class="sync-progress mt-5">
@@ -257,7 +297,7 @@ onBeforeUnmount(closeSSE)
                 class="me-2"
               />
               <span class="text-body-2 font-weight-medium">
-                正在同步{{ syncProgress.phase === 'season' ? '季信息' : '媒体库' }}
+                正在{{ syncProgress.phase === 'season' ? '重建季缓存' : '同步媒体库' }}
               </span>
             </div>
 
@@ -294,7 +334,13 @@ onBeforeUnmount(closeSSE)
               <div>
                 <div class="text-body-2 font-weight-semibold">同步完成</div>
                 <div class="text-caption text-medium-emphasis">
-                  共同步 {{ syncResult.total_items?.toLocaleString() }} 个媒体条目，{{ syncResult.total_seasons?.toLocaleString() }} 个季，耗时 {{ formatDuration(syncResult.elapsed_ms) }}
+                  <template v-if="syncResult.is_incremental">
+                    增量同步：新增 {{ syncResult.new_items?.toLocaleString() }} 个，更新 {{ syncResult.updated_items?.toLocaleString() }} 个，
+                    当前共 {{ syncResult.total_items?.toLocaleString() }} 个媒体条目，{{ syncResult.total_seasons?.toLocaleString() }} 个季，耗时 {{ formatDuration(syncResult.elapsed_ms) }}
+                  </template>
+                  <template v-else>
+                    全量同步：共 {{ syncResult.total_items?.toLocaleString() }} 个媒体条目，{{ syncResult.total_seasons?.toLocaleString() }} 个季，耗时 {{ formatDuration(syncResult.elapsed_ms) }}
+                  </template>
                 </div>
               </div>
             </VCardText>
@@ -352,6 +398,68 @@ onBeforeUnmount(closeSSE)
   border-radius: 12px;
   background: rgba(var(--v-theme-primary), 0.04);
   border: 1px solid rgba(var(--v-theme-primary), 0.12);
+}
+
+.sync-mode-group {
+  display: inline-flex;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  height: 36px;
+
+  .sync-mode-btn {
+    padding: 0 16px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    color: rgba(var(--v-theme-on-surface), 0.6);
+    transition: all 0.2s ease;
+    height: 100%;
+
+    &:not(:last-child) {
+      border-right: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+    }
+
+    // 增量选中 - 绿色
+    &.active:not(.warn) {
+      background: #10b981;
+      color: #fff;
+    }
+
+    // 全量选中 - 橙色
+    &.warn.active {
+      background: #f59e0b;
+      color: #fff;
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    &:not(.active):not(:disabled):hover {
+      background: rgba(var(--v-theme-on-surface), 0.08);
+    }
+  }
+}
+
+.ws-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 8px;
+  flex-shrink: 0;
+
+  &.online {
+    background: #10b981;
+    box-shadow: 0 0 6px #10b98180;
+  }
+
+  &.offline {
+    background: rgba(var(--v-theme-on-surface), 0.3);
+  }
 }
 
 // 移动端响应式适配

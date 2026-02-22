@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -32,6 +33,7 @@ type MediaItem struct {
 	ParentIndexNumber   int               `json:"ParentIndexNumber"`   // 季号
 	ChildCount          int               `json:"ChildCount"`          // 子条目数量（季的集数）
 	RecursiveItemCount  int               `json:"RecursiveItemCount"`  // 递归子条目数量
+	ProductionYear      int               `json:"ProductionYear"`      // 制作年份
 }
 
 // MediaItemsResponse Emby Items 接口响应
@@ -64,7 +66,7 @@ func NewClient(host string, port int, apiKey string) *Client {
 		Port:   port,
 		APIKey: apiKey,
 		HTTPClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: 30 * time.Minute,
 		},
 	}
 }
@@ -209,6 +211,11 @@ func (c *Client) GetChildItems(parentID string, itemType string) ([]MediaItem, e
 	return resp.Items, nil
 }
 
+// DoRequestWithContext 使用 context 执行 HTTP 请求并返回响应体（导出供外部使用）
+func (c *Client) DoRequestWithContext(ctx context.Context, path string) ([]byte, error) {
+	return c.doRequestWithContext(ctx, path)
+}
+
 // doRequestWithContext 使用 context 执行 HTTP 请求并返回响应体
 func (c *Client) doRequestWithContext(ctx context.Context, path string) ([]byte, error) {
 	url := fmt.Sprintf("%s%s", c.baseURL(), path)
@@ -350,6 +357,120 @@ func (c *Client) GetChildItemCount(ctx context.Context, parentID string, itemTyp
 	return resp.TotalRecordCount, nil
 }
 
+
+// GetItemByID 通过 Emby Item ID 获取单个媒体条目
+func (c *Client) GetItemByID(ctx context.Context, itemID string) ([]MediaItem, error) {
+	path := fmt.Sprintf("/emby/Items?Ids=%s&Fields=Path,ProviderIds,ImageTags,ParentIndexNumber,SeriesId,SeriesName,MediaSources", itemID)
+
+	body, err := c.doRequestWithContext(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("获取条目失败 (ID=%s): %w", itemID, err)
+	}
+
+	var resp MediaItemsResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("解析条目响应失败: %w", err)
+	}
+
+	return resp.Items, nil
+}
+
+// GetMediaItemsModifiedSince 获取指定时间之后修改的媒体条目（增量同步用）
+// 使用 Emby 的 MinDateLastSaved 参数过滤
+func (c *Client) GetMediaItemsModifiedSince(ctx context.Context, since time.Time, itemType string, callback func(items []MediaItem) error) error {
+	startIndex := 0
+	sinceStr := since.UTC().Format("2006-01-02T15:04:05.0000000Z")
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		path := fmt.Sprintf("/emby/Items?StartIndex=%d&Limit=%d&Recursive=true&Fields=Path,ProviderIds,ImageTags,ParentIndexNumber,SeriesId,SeriesName,MediaSources&MinDateLastSaved=%s",
+			startIndex, PageSize, sinceStr)
+
+		if itemType != "" {
+			path += "&IncludeItemTypes=" + itemType
+		}
+
+		body, err := c.doRequestWithContext(ctx, path)
+		if err != nil {
+			return fmt.Errorf("获取增量媒体条目失败 (StartIndex=%d): %w", startIndex, err)
+		}
+
+		var resp MediaItemsResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return fmt.Errorf("解析增量媒体条目响应失败: %w", err)
+		}
+
+		if len(resp.Items) == 0 {
+			break
+		}
+
+		if err := callback(resp.Items); err != nil {
+			return fmt.Errorf("处理增量媒体条目回调失败: %w", err)
+		}
+
+		startIndex += len(resp.Items)
+
+		if startIndex >= resp.TotalRecordCount {
+			break
+		}
+	}
+
+	return nil
+}
+
+// GetAllItemIDs 获取 Emby 中所有媒体条目的 ID 列表（用于增量同步时检测已删除的条目）
+// 使用大页面分页获取，只取 ID 字段以减少数据量
+func (c *Client) GetAllItemIDs(ctx context.Context, itemType string) (map[string]bool, int, error) {
+	ids := make(map[string]bool, 300000)
+	startIndex := 0
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, 0, ctx.Err()
+		default:
+		}
+
+		// 只请求最少的字段，减少传输量
+		path := fmt.Sprintf("/emby/Items?StartIndex=%d&Limit=%d&Recursive=true&Fields=&EnableImages=false",
+			startIndex, PageSize)
+
+		if itemType != "" {
+			path += "&IncludeItemTypes=" + itemType
+		}
+
+		body, err := c.doRequestWithContext(ctx, path)
+		if err != nil {
+			return nil, 0, fmt.Errorf("获取 Emby ID 列表失败 (StartIndex=%d): %w", startIndex, err)
+		}
+
+		var resp MediaItemsResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return nil, 0, fmt.Errorf("解析 Emby ID 列表响应失败: %w", err)
+		}
+
+		if len(resp.Items) == 0 {
+			break
+		}
+
+		for _, item := range resp.Items {
+			ids[item.ID] = true
+		}
+
+		startIndex += len(resp.Items)
+
+		if startIndex >= resp.TotalRecordCount {
+			break
+		}
+	}
+
+	return ids, len(ids), nil
+}
 
 // DeleteVersion 删除 Emby 媒体条目的某个版本文件（带 fallback 兼容）
 // 主端点: POST /emby/Items/{itemId}/DeleteVersion
@@ -522,4 +643,27 @@ func (c *Client) DownloadRemoteImage(ctx context.Context, itemID string, imageTy
 	}
 
 	return nil
+}
+
+// SearchItems 通过关键字搜索 Emby 媒体条目
+// 只返回 Movie 和 Series 类型，支持 limit 参数控制返回数量
+func (c *Client) SearchItems(ctx context.Context, keyword string, limit int) ([]MediaItem, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	path := fmt.Sprintf("/emby/Items?SearchTerm=%s&IncludeItemTypes=Movie,Series&Recursive=true&Limit=%d&Fields=Path,ProviderIds,ChildCount,RecursiveItemCount,ProductionYear",
+		url.QueryEscape(keyword), limit)
+
+	body, err := c.doRequestWithContext(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("搜索媒体条目失败: %w", err)
+	}
+
+	var resp MediaItemsResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("解析搜索结果失败: %w", err)
+	}
+
+	return resp.Items, nil
 }

@@ -20,7 +20,7 @@ type MediaCache struct {
 	IndexNumber       int       `gorm:"default:0" json:"index_number"`
 	ParentIndexNumber int       `gorm:"default:0" json:"parent_index_number"` // 季号
 	ChildCount        int       `gorm:"default:0" json:"child_count"`
-	SeriesID          string    `gorm:"size:50;default:''" json:"series_id"`     // 所属 Series 的 Emby ID
+	SeriesID          string    `gorm:"size:50;default:'';index" json:"series_id"`     // 所属 Series 的 Emby ID
 	SeriesName        string    `gorm:"size:500;default:''" json:"series_name"`  // 所属 Series 名称
 	LibraryName       string    `gorm:"size:255" json:"library_name"`
 	CachedAt          time.Time `gorm:"not null" json:"cached_at"`

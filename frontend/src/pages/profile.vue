@@ -116,7 +116,12 @@ async function changePassword() {
       new_password: passwordForm.value.new_password,
     })
     passwordForm.value = { old_password: '', new_password: '', confirm_password: '' }
-    snackbar.success('密码修改成功')
+    snackbar.success('密码修改成功，即将跳转登录页')
+    // 清除 token，跳转登录页
+    setTimeout(() => {
+      localStorage.removeItem('token')
+      window.location.href = '/login'
+    }, 1500)
   } catch (e) {
     snackbar.error(e.response?.data?.message || '密码修改失败')
   } finally {

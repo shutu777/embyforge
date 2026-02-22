@@ -11,12 +11,12 @@ import (
 // Config 应用配置结构体
 type Config struct {
 	Port      int    // 服务端口
-	JWTSecret string // JWT 签名密钥
+	JWTSecret string // JWT 签名密钥（优先使用环境变量，否则从数据库加载）
 	DBPath    string // SQLite 数据库文件路径
 }
 
-// generateRandomSecret 生成随机 JWT 密钥
-func generateRandomSecret() string {
+// GenerateRandomSecret 生成随机 JWT 密钥（导出供外部使用）
+func GenerateRandomSecret() string {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		log.Fatal("生成随机 JWT 密钥失败:", err)
@@ -25,6 +25,7 @@ func generateRandomSecret() string {
 }
 
 // Load 从环境变量加载配置，未设置时使用默认值
+// 注意：JWTSecret 如果未通过环境变量设置，将留空，由 main.go 从数据库加载
 func Load() *Config {
 	cfg := &Config{
 		Port:   8080,
@@ -39,10 +40,8 @@ func Load() *Config {
 
 	if secret := os.Getenv("EMBYFORGE_JWT_SECRET"); secret != "" {
 		cfg.JWTSecret = secret
-	} else {
-		cfg.JWTSecret = generateRandomSecret()
-		log.Println("未设置 EMBYFORGE_JWT_SECRET，已自动生成随机密钥")
 	}
+	// 不再自动生成随机密钥，由 main.go 从数据库持久化加载
 
 	if dbPath := os.Getenv("EMBYFORGE_DB_PATH"); dbPath != "" {
 		cfg.DBPath = dbPath

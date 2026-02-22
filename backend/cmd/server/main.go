@@ -115,6 +115,26 @@ func main() {
 	}
 	log.Println("📦 数据库初始化完成")
 
+	// 如果环境变量未设置 JWT secret，从数据库加载持久化密钥
+	jwtSecret := cfg.JWTSecret
+	if jwtSecret == "" {
+		var sc model.SystemConfig
+		if err := db.Where("`key` = ?", "jwt_secret").First(&sc).Error; err != nil {
+			// 数据库中没有，生成并持久化
+			jwtSecret = config.GenerateRandomSecret()
+			db.Create(&model.SystemConfig{
+				Key:         "jwt_secret",
+				Value:       jwtSecret,
+				Description: "JWT 签名密钥（自动生成，修改密码时会更新）",
+			})
+			log.Println("🔑 已生成并持久化 JWT 密钥")
+		} else {
+			jwtSecret = sc.Value
+			log.Println("🔑 已从数据库加载 JWT 密钥")
+		}
+	}
+	cfg.JWTSecret = jwtSecret
+
 	// 初始化请求日志（写入文件，不输出到终端）
 	logDir := filepath.Join(filepath.Dir(cfg.DBPath), "logs")
 	accessLog, err := newAccessLogger(logDir)
@@ -139,6 +159,8 @@ func main() {
 	symediaHandler := handler.NewSymediaHandler(db, cfg.JWTSecret)
 	webhookHandler := handler.NewWebhookHandler(db, symediaHandler)
 	renderingWordsHandler := handler.NewRenderingWordsHandler(db)
+	embyCacheHandler := handler.NewEmbyCacheHandler(db)
+	quickDeleteHandler := handler.NewQuickDeleteHandler(db)
 
 	// 初始化 Gin 引擎
 	r := gin.New()
@@ -172,6 +194,9 @@ func main() {
 
 	// SSE 路由（handler 内部通过 query parameter 验证 JWT，不使用中间件）
 	r.GET("/api/cache/sync/stream", cacheHandler.SyncCacheStream)
+
+	// 启动 Emby WebSocket 实时监听（后台自动重连）
+	cacheHandler.StartWSListener()
 
 	{
 		protected.GET("/dashboard", dashboardHandler.GetDashboard)
@@ -228,6 +253,18 @@ func main() {
 		// 渲染词生成器
 		protected.GET("/rendering-words/import-candidates", renderingWordsHandler.GetImportCandidates)
 		protected.GET("/rendering-words/validate-tmdb/:tmdbId", renderingWordsHandler.ValidateTmdbID)
+
+		// Emby 缓存管理
+		protected.GET("/emby-cache", embyCacheHandler.GetEmbyCacheList)
+		protected.GET("/emby-cache/status", embyCacheHandler.GetEmbyCacheStatus)
+		protected.PUT("/emby-cache/:id", embyCacheHandler.UpdateEmbyCache)
+		protected.DELETE("/emby-cache/:id", embyCacheHandler.DeleteEmbyCache)
+		protected.POST("/emby-cache/:id/refresh", embyCacheHandler.RefreshEmbyCache)
+
+		// 快速删除
+		protected.GET("/quick-delete/search", quickDeleteHandler.SearchEmbyMedia)
+		protected.GET("/quick-delete/seasons/:seriesId", quickDeleteHandler.GetSeriesSeasons)
+		protected.POST("/quick-delete/delete", quickDeleteHandler.DeleteMedia)
 	}
 
 	// 启动服务

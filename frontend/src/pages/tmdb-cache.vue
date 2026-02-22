@@ -199,7 +199,7 @@ onMounted(async () => { await Promise.all([fetchList(), fetchCacheStatus()]) })
                 </div>
               </VExpansionPanelTitle>
               <VExpansionPanelText>
-                <div class="d-flex justify-end mb-2 gap-2">
+                <div class="d-flex flex-wrap justify-end mb-2 gap-2 action-links">
                   <VBtn size="small" variant="text" color="info" @click.stop="openInTmdb(group.tmdb_id)">
                     <VIcon icon="ri-external-link-line" size="14" class="me-1" />
                     在 TMDB 中查看
@@ -211,53 +211,55 @@ onMounted(async () => { await Promise.all([fetchList(), fetchCacheStatus()]) })
                 </div>
                 <!-- 移动端：卡片布局 -->
                 <div v-if="smAndDown" class="mobile-items">
-                  <div v-for="season in group.seasons" :key="season.id" class="mobile-item pa-3">
-                    <div class="d-flex align-center justify-space-between mb-1">
-                      <span class="text-body-2 font-weight-medium">Season {{ season.season_number }}</span>
-                      <span class="text-body-2">{{ season.episode_count }} 集</span>
-                    </div>
-                    <div class="text-caption text-medium-emphasis mb-1">{{ season.season_name || '-' }}</div>
+                  <div v-for="season in group.seasons" :key="season.id" class="mobile-item pa-2">
                     <div class="d-flex align-center justify-space-between">
-                      <span class="text-caption text-medium-emphasis">{{ formatTime(season.cached_at) }}</span>
-                      <div class="d-flex gap-1">
-                        <VBtn size="x-small" variant="text" color="primary" @click="openEdit(season)">
+                      <div>
+                        <span class="text-body-2 font-weight-medium">Season {{ season.season_number }}</span>
+                        <span class="text-caption text-medium-emphasis ms-2">{{ season.season_name || '' }}</span>
+                      </div>
+                      <div class="d-flex align-center gap-1">
+                        <span class="text-body-2 me-1">{{ season.episode_count }} 集</span>
+                        <VBtn size="x-small" icon variant="text" color="primary" @click="openEdit(season)">
                           <VIcon icon="ri-edit-line" size="14" />
                         </VBtn>
-                        <VBtn size="x-small" variant="text" color="error" @click="deleteSeason(season.id)">
+                        <VBtn size="x-small" icon variant="text" color="error" @click="deleteSeason(season.id)">
                           <VIcon icon="ri-delete-bin-line" size="14" />
                         </VBtn>
                       </div>
                     </div>
+                    <div class="text-caption text-medium-emphasis">{{ formatTime(season.cached_at) }}</div>
                   </div>
                 </div>
                 <!-- 桌面端：表格布局 -->
-                <VTable v-else density="compact">
-                  <thead>
-                    <tr>
-                      <th>季</th>
-                      <th>季名称</th>
-                      <th>集数</th>
-                      <th>缓存时间</th>
-                      <th style="width: 140px;">操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="season in group.seasons" :key="season.id">
-                      <td>Season {{ season.season_number }}</td>
-                      <td>{{ season.season_name || '-' }}</td>
-                      <td>{{ season.episode_count }}</td>
-                      <td>{{ formatTime(season.cached_at) }}</td>
-                      <td>
-                        <VBtn size="x-small" variant="text" color="primary" @click="openEdit(season)">
-                          <VIcon icon="ri-edit-line" size="14" />
-                        </VBtn>
-                        <VBtn size="x-small" variant="text" color="error" @click="deleteSeason(season.id)">
-                          <VIcon icon="ri-delete-bin-line" size="14" />
-                        </VBtn>
-                      </td>
-                    </tr>
-                  </tbody>
-                </VTable>
+                <div v-else class="table-responsive">
+                  <VTable density="compact">
+                    <thead>
+                      <tr>
+                        <th>季</th>
+                        <th>季名称</th>
+                        <th>集数</th>
+                        <th>缓存时间</th>
+                        <th style="width: 140px;">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="season in group.seasons" :key="season.id">
+                        <td>Season {{ season.season_number }}</td>
+                        <td>{{ season.season_name || '-' }}</td>
+                        <td>{{ season.episode_count }}</td>
+                        <td>{{ formatTime(season.cached_at) }}</td>
+                        <td>
+                          <VBtn size="x-small" variant="text" color="primary" @click="openEdit(season)">
+                            <VIcon icon="ri-edit-line" size="14" />
+                          </VBtn>
+                          <VBtn size="x-small" variant="text" color="error" @click="deleteSeason(season.id)">
+                            <VIcon icon="ri-delete-bin-line" size="14" />
+                          </VBtn>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </VTable>
+                </div>
               </VExpansionPanelText>
             </VExpansionPanel>
           </VExpansionPanels>
@@ -336,6 +338,7 @@ onMounted(async () => { await Promise.all([fetchList(), fetchCacheStatus()]) })
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  margin-inline-start: 8px;
 }
 
 .h-100 {
@@ -350,6 +353,16 @@ onMounted(async () => { await Promise.all([fetchList(), fetchCacheStatus()]) })
       border-block-end: none;
     }
   }
+}
+
+.table-responsive {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tmdb-cache-time {
+  word-break: break-word;
+  line-height: 1.3;
 }
 
 .panel-title-content {
@@ -375,6 +388,17 @@ onMounted(async () => { await Promise.all([fetchList(), fetchCacheStatus()]) })
     .panel-title-name {
       white-space: normal;
       word-break: break-all;
+    }
+  }
+
+  .action-links {
+    justify-content: flex-start !important;
+    margin-bottom: 4px !important;
+
+    .v-btn {
+      font-size: 0.75rem;
+      padding: 0 6px !important;
+      min-width: 0;
     }
   }
 }

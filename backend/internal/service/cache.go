@@ -20,6 +20,10 @@ type SyncResult struct {
 	TotalItems   int   `json:"total_items"`
 	TotalSeasons int   `json:"total_seasons"`
 	ElapsedMs    int64 `json:"elapsed_ms"`
+	NewItems     int   `json:"new_items"`     // 增量同步：新增条目数
+	UpdatedItems int   `json:"updated_items"` // 增量同步：更新条目数
+	DeletedItems int   `json:"deleted_items"` // 增量同步：删除条目数
+	IsIncremental bool `json:"is_incremental"` // 是否为增量同步
 }
 
 // SyncProgress 同步进度事件
@@ -275,8 +279,10 @@ func (s *CacheService) SyncMediaCacheWithProgress(ctx context.Context, client *e
 	}
 	log.Printf("🗑️ 已清空缓存表")
 
-	// 同步前删除索引 + 额外写入优化 pragma
+	// 同步前删除索引 + 额外写入优化 pragma（写入完成后重建）
 	s.DB.Exec("DROP INDEX IF EXISTS idx_media_cache_emby_item_id")
+	s.DB.Exec("DROP INDEX IF EXISTS idx_media_caches_type")
+	s.DB.Exec("DROP INDEX IF EXISTS idx_media_caches_series_id")
 	s.DB.Exec("PRAGMA temp_store=MEMORY")
 	s.DB.Exec("PRAGMA mmap_size=268435456") // 256MB mmap
 
@@ -364,7 +370,7 @@ func (s *CacheService) SyncMediaCacheWithProgress(ctx context.Context, client *e
 	if err != nil {
 		close(writeCh)
 		sendError(fmt.Sprintf("获取 Emby 媒体条目失败: %v", err))
-		s.DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_media_cache_emby_item_id ON media_caches(emby_item_id)")
+		s.rebuildMediaCacheIndexes()
 		return
 	}
 
@@ -375,7 +381,7 @@ func (s *CacheService) SyncMediaCacheWithProgress(ctx context.Context, client *e
 		case err := <-writeErrCh:
 			close(writeCh)
 			sendError(fmt.Sprintf("DB 写入失败: %v", err))
-			s.DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_media_cache_emby_item_id ON media_caches(emby_item_id)")
+			s.rebuildMediaCacheIndexes()
 			return
 		}
 		result.TotalItems += len(buffer)
@@ -385,7 +391,7 @@ func (s *CacheService) SyncMediaCacheWithProgress(ctx context.Context, client *e
 	close(writeCh)
 	if err := <-writeErrCh; err != nil {
 		sendError(fmt.Sprintf("DB 写入失败: %v", err))
-		s.DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_media_cache_emby_item_id ON media_caches(emby_item_id)")
+		s.rebuildMediaCacheIndexes()
 		return
 	}
 
@@ -398,9 +404,7 @@ func (s *CacheService) SyncMediaCacheWithProgress(ctx context.Context, client *e
 	log.Printf("📊 媒体缓存写入完成: 共 %d 个条目 (去重前 API 返回 %d 个)", result.TotalItems, len(seen))
 
 	// 重建索引
-	if err := s.DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_media_cache_emby_item_id ON media_caches(emby_item_id)").Error; err != nil {
-		log.Printf("⚠️ 重建索引失败（非致命）: %v", err)
-	}
+	s.rebuildMediaCacheIndexes()
 
 	// 直接从已同步的 Episode 数据聚合生成季缓存（零额外 HTTP 请求）
 	seasonCount, err := s.buildSeasonCacheFromEpisodes(sqlDB)
@@ -418,6 +422,13 @@ func (s *CacheService) SyncMediaCacheWithProgress(ctx context.Context, client *e
 	case progressCh <- SyncProgress{Phase: "done", Done: true, Processed: result.TotalItems, Total: total, Result: result}:
 	case <-ctx.Done():
 	}
+}
+
+// rebuildMediaCacheIndexes 重建 media_caches 表的所有索引
+func (s *CacheService) rebuildMediaCacheIndexes() {
+	s.DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_media_cache_emby_item_id ON media_caches(emby_item_id)")
+	s.DB.Exec("CREATE INDEX IF NOT EXISTS idx_media_caches_type ON media_caches(type)")
+	s.DB.Exec("CREATE INDEX IF NOT EXISTS idx_media_caches_series_id ON media_caches(series_id)")
 }
 
 // rawInsertMediaCaches 使用原生 SQL prepared statement 批量写入媒体缓存
@@ -603,6 +614,159 @@ func (s *CacheService) buildSeasonCacheFromEpisodes(sqlDB *sql.DB) (int, error) 
 	return len(aggs), nil
 }
 
+// IncrementalSyncMediaCacheWithProgress 增量同步：只同步新增和修改的条目，检测并删除已移除的条目
+// 流程：
+//  1. 获取上次同步时间（last_sync_at）
+//  2. 如果没有上次同步记录 → 回退到全量同步
+//  3. 通过 MinDateLastSaved 获取修改过的条目 → UPSERT 到本地缓存
+//  4. 获取 Emby 当前所有 ID → 删除本地有但 Emby 已移除的条目
+//  5. 重建季缓存
+func (s *CacheService) IncrementalSyncMediaCacheWithProgress(ctx context.Context, client *emby.Client, progressCh chan<- SyncProgress) {
+	// 注意：不使用 defer close(progressCh)，因为可能回退到全量同步（由全量方法负责 close）
+
+	// 获取上次同步时间
+	status, err := s.GetCacheStatus()
+	if err != nil || status.LastSyncAt == nil || status.TotalItems == 0 {
+		// 没有上次同步记录，回退到全量同步（全量方法会负责 close progressCh）
+		log.Printf("📊 没有上次同步记录，回退到全量同步")
+		s.SyncMediaCacheWithProgress(ctx, client, progressCh)
+		return
+	}
+
+	// 走增量逻辑，由本方法负责 close
+	defer close(progressCh)
+	start := time.Now()
+
+	sendError := func(msg string) {
+		select {
+		case progressCh <- SyncProgress{Phase: "media", Error: msg}:
+		case <-ctx.Done():
+		}
+	}
+
+	sendProgress := func(phase string, processed, total int) {
+		select {
+		case progressCh <- SyncProgress{Phase: phase, Processed: processed, Total: total}:
+		case <-ctx.Done():
+		}
+	}
+
+	select {
+	case <-ctx.Done():
+		sendError("同步已取消")
+		return
+	default:
+	}
+
+	lastSyncAt := *status.LastSyncAt
+	log.Printf("🔄 开始增量同步，上次同步时间: %s", lastSyncAt.Format(time.RFC3339))
+
+	result := &SyncResult{IsIncremental: true}
+
+	// 阶段 1：获取修改过的条目并 UPSERT
+	sendProgress("media", 0, 0)
+
+	processed := 0
+	err = client.GetMediaItemsModifiedSince(ctx, lastSyncAt, emby.SyncItemTypes, func(items []emby.MediaItem) error {
+		if len(items) == 0 {
+			return nil
+		}
+
+		caches := make([]model.MediaCache, 0, len(items))
+		for _, item := range items {
+			cache := model.NewMediaCacheFromItem(item, "")
+			caches = append(caches, cache)
+		}
+
+		// UPSERT：存在则更新，不存在则插入
+		for _, c := range caches {
+			var existing model.MediaCache
+			dbResult := s.DB.Where("emby_item_id = ?", c.EmbyItemID).First(&existing)
+			if dbResult.Error == nil {
+				// 已存在，更新
+				if err := s.DB.Model(&existing).Updates(map[string]interface{}{
+					"name":               c.Name,
+					"type":               c.Type,
+					"has_poster":         c.HasPoster,
+					"path":               c.Path,
+					"provider_ids":       c.ProviderIDs,
+					"file_size":          c.FileSize,
+					"index_number":       c.IndexNumber,
+					"parent_index_number": c.ParentIndexNumber,
+					"child_count":        c.ChildCount,
+					"series_id":          c.SeriesID,
+					"series_name":        c.SeriesName,
+					"library_name":       c.LibraryName,
+					"cached_at":          c.CachedAt,
+				}).Error; err != nil {
+					log.Printf("⚠️ 更新缓存记录失败 (EmbyItemID=%s): %v", c.EmbyItemID, err)
+					continue
+				}
+				result.UpdatedItems++
+			} else {
+				// 不存在，插入
+				if err := s.DB.Create(&c).Error; err != nil {
+					log.Printf("⚠️ 插入缓存记录失败 (EmbyItemID=%s): %v", c.EmbyItemID, err)
+					continue
+				}
+				result.NewItems++
+			}
+		}
+
+		processed += len(items)
+		sendProgress("media", processed, 0)
+		log.Printf("📊 增量同步: 已处理 %d 个变更条目 (新增: %d, 更新: %d)",
+			processed, result.NewItems, result.UpdatedItems)
+
+		return nil
+	})
+
+	if err != nil {
+		sendError(fmt.Sprintf("获取增量媒体条目失败: %v", err))
+		return
+	}
+
+	log.Printf("📊 增量变更处理完成: 新增 %d, 更新 %d", result.NewItems, result.UpdatedItems)
+
+	// 阶段 2：删除检测已由 WebSocket 实时监听处理，增量同步不再需要
+	// 如需精确清理，请使用全量同步模式
+
+	// 阶段 3：重建季缓存
+	sendProgress("season", 0, 0)
+
+	// 清空并重建季缓存
+	if err := s.DB.Exec("DELETE FROM season_caches").Error; err != nil {
+		log.Printf("⚠️ 清空季缓存表失败: %v", err)
+	} else {
+		sqlDB, err := s.DB.DB()
+		if err != nil {
+			log.Printf("⚠️ 获取数据库连接失败: %v", err)
+		} else {
+			seasonCount, err := s.buildSeasonCacheFromEpisodes(sqlDB)
+			if err != nil {
+				log.Printf("⚠️ 从 Episode 聚合生成季缓存失败: %v", err)
+			} else {
+				result.TotalSeasons = seasonCount
+			}
+		}
+	}
+
+	// 统计最终总数
+	var totalCount int64
+	s.DB.Model(&model.MediaCache{}).Count(&totalCount)
+	result.TotalItems = int(totalCount)
+
+	result.ElapsedMs = time.Since(start).Milliseconds()
+	log.Printf("✅ 增量同步完成: 总计 %d 条目 (新增 %d, 更新 %d, 删除 %d), %d 个季, 耗时 %dms",
+		result.TotalItems, result.NewItems, result.UpdatedItems, result.DeletedItems,
+		result.TotalSeasons, result.ElapsedMs)
+
+	select {
+	case progressCh <- SyncProgress{Phase: "done", Done: true, Processed: result.TotalItems, Total: result.TotalItems, Result: result}:
+	case <-ctx.Done():
+	}
+}
+
 // GetCacheStatus 获取缓存状态信息
 func (s *CacheService) GetCacheStatus() (*model.CacheStatus, error) {
 	status := &model.CacheStatus{}
@@ -624,4 +788,113 @@ func (s *CacheService) GetCacheStatus() (*model.CacheStatus, error) {
 	}
 
 	return status, nil
+}
+
+// HandleLibraryChanged 处理媒体库变更事件
+// 由 LibraryWatcher 回调触发，直接接收完整的 MediaItem（无需二次请求）
+func (s *CacheService) HandleLibraryChanged(ctx context.Context, client *emby.Client, items []emby.MediaItem, removed []string) {
+	// 处理删除检测信号
+	if len(removed) == 1 && removed[0] == "__DETECT_DELETIONS__" {
+		s.detectAndRemoveDeletedItems(ctx, client)
+		removed = nil
+	}
+
+	// 处理普通删除：直接从本地缓存中删除
+	if len(removed) > 0 {
+		const deleteBatch = 500
+		for i := 0; i < len(removed); i += deleteBatch {
+			end := i + deleteBatch
+			if end > len(removed) {
+				end = len(removed)
+			}
+			if err := s.DB.Where("emby_item_id IN ?", removed[i:end]).Delete(&model.MediaCache{}).Error; err != nil {
+				log.Printf("⚠️ 实时删除缓存记录失败: %v", err)
+			}
+		}
+		log.Printf("🗑️ 实时同步: 已删除 %d 个缓存条目", len(removed))
+	}
+
+	// 处理新增和更新：直接使用传入的完整 MediaItem，无需再调用 GetItemByID
+	if len(items) > 0 {
+		newCount, updateCount := 0, 0
+		for _, item := range items {
+			// 只处理我们关心的类型
+			if item.Type != "Movie" && item.Type != "Series" && item.Type != "Episode" {
+				continue
+			}
+
+			cache := model.NewMediaCacheFromItem(item, "")
+			var existing model.MediaCache
+			if s.DB.Where("emby_item_id = ?", cache.EmbyItemID).First(&existing).Error == nil {
+				// 已存在，更新
+				s.DB.Model(&existing).Updates(map[string]interface{}{
+					"name":                cache.Name,
+					"type":                cache.Type,
+					"has_poster":          cache.HasPoster,
+					"path":                cache.Path,
+					"provider_ids":        cache.ProviderIDs,
+					"file_size":           cache.FileSize,
+					"index_number":        cache.IndexNumber,
+					"parent_index_number": cache.ParentIndexNumber,
+					"child_count":         cache.ChildCount,
+					"series_id":           cache.SeriesID,
+					"series_name":         cache.SeriesName,
+					"library_name":        cache.LibraryName,
+					"cached_at":           cache.CachedAt,
+				})
+				updateCount++
+			} else {
+				// 不存在，插入
+				if err := s.DB.Create(&cache).Error; err != nil {
+					log.Printf("⚠️ 实时同步插入缓存失败 (EmbyItemID=%s): %v", cache.EmbyItemID, err)
+				}
+				newCount++
+			}
+		}
+		if newCount > 0 || updateCount > 0 {
+			log.Printf("📡 实时同步: 新增 %d, 更新 %d 个缓存条目", newCount, updateCount)
+		}
+	}
+}
+
+// detectAndRemoveDeletedItems 检测并删除 Emby 中已不存在的本地缓存条目
+// 通过分页获取 Emby 所有 ID，与本地缓存对比，删除本地多余的条目
+func (s *CacheService) detectAndRemoveDeletedItems(ctx context.Context, client *emby.Client) {
+	log.Printf("🔍 开始检测已删除的条目...")
+
+	embyIDs, total, err := client.GetAllItemIDs(ctx, emby.SyncItemTypes)
+	if err != nil {
+		log.Printf("⚠️ 获取 Emby ID 列表失败: %v", err)
+		return
+	}
+
+	// 获取本地所有 emby_item_id
+	var localIDs []string
+	if err := s.DB.Model(&model.MediaCache{}).Pluck("emby_item_id", &localIDs).Error; err != nil {
+		log.Printf("⚠️ 获取本地缓存 ID 列表失败: %v", err)
+		return
+	}
+
+	// 找出本地有但 Emby 没有的条目
+	var toDelete []string
+	for _, id := range localIDs {
+		if !embyIDs[id] {
+			toDelete = append(toDelete, id)
+		}
+	}
+
+	if len(toDelete) > 0 {
+		const deleteBatch = 500
+		for i := 0; i < len(toDelete); i += deleteBatch {
+			end := i + deleteBatch
+			if end > len(toDelete) {
+				end = len(toDelete)
+			}
+			s.DB.Where("emby_item_id IN ?", toDelete[i:end]).Delete(&model.MediaCache{})
+		}
+		log.Printf("🗑️ 删除检测完成: 删除了 %d 个本地多余条目 (Emby 总数: %d, 本地原有: %d)",
+			len(toDelete), total, len(localIDs))
+	} else {
+		log.Printf("✅ 删除检测完成: 无需删除 (Emby: %d, 本地: %d)", total, len(localIDs))
+	}
 }

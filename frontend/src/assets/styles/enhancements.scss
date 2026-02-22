@@ -33,6 +33,26 @@
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4) !important;
 }
 
+// 移动端禁用卡片悬停动画
+@media (max-width: 599.98px) {
+  .v-card:not([data-no-hover]) {
+    transition: none !important;
+
+    &::before {
+      display: none;
+    }
+
+    &:hover {
+      transform: none !important;
+      box-shadow: none !important;
+    }
+  }
+
+  .v-theme--dark .v-card:not([data-no-hover]):hover {
+    box-shadow: none !important;
+  }
+}
+
 // 按钮增强
 .v-btn {
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
@@ -43,6 +63,15 @@
   
   &:active:not(:disabled) {
     transform: translateY(0);
+  }
+}
+
+// 移动端禁用按钮悬浮位移
+@media (max-width: 599.98px) {
+  .v-btn {
+    &:hover:not(:disabled) {
+      transform: none;
+    }
   }
 }
 
@@ -138,6 +167,20 @@
   }
 }
 
+// 移动端禁用所有悬浮工具类
+@media (max-width: 599.98px) {
+  .card-hover-lift,
+  .card-hover-glow,
+  .card-hover-3d {
+    transition: none !important;
+
+    &:hover {
+      transform: none !important;
+      box-shadow: none !important;
+    }
+  }
+}
+
 // 骨架屏加载动画
 .skeleton-loader {
   background: linear-gradient(
@@ -179,6 +222,19 @@
   .stats-icon-container {
     transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
     background: radial-gradient(circle, rgba(var(--v-theme-primary), 0.15), transparent);
+  }
+
+  @media (max-width: 599.98px) {
+    transition: none !important;
+
+    &:hover {
+      transform: none !important;
+      box-shadow: none !important;
+
+      .stats-icon-container {
+        transform: none;
+      }
+    }
   }
 }
 

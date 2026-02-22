@@ -280,9 +280,9 @@ onMounted(async () => {
         <!-- 统计卡片 -->
         <VRow class="mb-4">
           <VCol cols="6" sm="4">
-            <VCard class="stat-card" style="height: 120px;">
+            <VCard class="stat-card stat-card-responsive">
               <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
-                <div>
+                <div class="stat-text-wrap">
                   <div class="text-body-2 text-medium-emphasis mb-1">重复组数</div>
                   <div class="text-h4 font-weight-bold stat-number">
                     {{ dupGroupCount.toLocaleString() }}
@@ -295,9 +295,9 @@ onMounted(async () => {
             </VCard>
           </VCol>
           <VCol cols="6" sm="4">
-            <VCard class="stat-card" style="height: 120px;">
+            <VCard class="stat-card stat-card-responsive">
               <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
-                <div>
+                <div class="stat-text-wrap">
                   <div class="text-body-2 text-medium-emphasis mb-1">缓存条目</div>
                   <div class="text-h4 font-weight-bold stat-number">
                     {{ cacheStatus.total_items.toLocaleString() }}
@@ -310,9 +310,9 @@ onMounted(async () => {
             </VCard>
           </VCol>
           <VCol cols="12" sm="4">
-            <VCard class="stat-card" style="height: 120px;">
+            <VCard class="stat-card stat-card-responsive">
               <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
-                <div>
+                <div class="stat-text-wrap">
                   <div class="text-body-2 text-medium-emphasis mb-1">最后分析</div>
                   <div class="text-h6 font-weight-bold">
                     {{ formatTime(lastAnalyzedAt) }}
@@ -656,6 +656,16 @@ onMounted(async () => {
   border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
 }
 
+.stat-card-responsive {
+  height: 120px;
+}
+
+.stat-text-wrap {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
 .content-card {
   border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   transform: none !important;
@@ -670,6 +680,7 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  margin-inline-start: 8px;
 }
 
 .h-100 {
@@ -760,17 +771,28 @@ onMounted(async () => {
     }
   }
 
+  .stat-card-responsive {
+    height: auto;
+    min-height: 90px;
+  }
+
   .stat-card-text {
-    padding: 12px !important;
+    padding: 10px !important;
   }
 
   .stat-number {
-    font-size: 1.25rem !important;
+    font-size: 1.15rem !important;
   }
 
   .stat-icon {
-    width: 40px;
-    height: 40px;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    margin-inline-start: 4px;
+
+    .v-icon {
+      font-size: 16px !important;
+    }
   }
 
   .action-buttons .v-btn {

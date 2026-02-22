@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net/http"
@@ -14,6 +16,15 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
+
+// generateRandomSecret 生成随机 JWT 密钥
+func generateRandomSecret() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		log.Fatal("生成随机 JWT 密钥失败:", err)
+	}
+	return hex.EncodeToString(b)
+}
 
 // ProfileHandler 个人设置处理器
 type ProfileHandler struct {
@@ -81,8 +92,18 @@ func (h *ProfileHandler) ChangePassword(c *gin.Context) {
 	}
 
 	h.DB.Model(&user).Update("password", string(hashed))
-	log.Printf("🔐 用户 %s 修改了密码", user.Username)
-	c.JSON(http.StatusOK, gin.H{"code": 200, "message": "密码修改成功"})
+
+	// 更新数据库中的 JWT secret，使所有旧 token 在下次重启后失效
+	newSecret := generateRandomSecret()
+	h.DB.Where("`key` = ?", "jwt_secret").Delete(&model.SystemConfig{})
+	h.DB.Create(&model.SystemConfig{
+		Key:         "jwt_secret",
+		Value:       newSecret,
+		Description: "JWT 签名密钥（自动生成，修改密码时会更新）",
+	})
+
+	log.Printf("🔐 用户 %s 修改了密码，JWT 密钥已更新", user.Username)
+	c.JSON(http.StatusOK, gin.H{"code": 200, "message": "密码修改成功，请重新登录"})
 }
 
 // ChangeUsernameRequest 修改用户名请求
