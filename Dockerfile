@@ -2,7 +2,8 @@
 FROM node:20-alpine AS frontend-builder
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm install --legacy-peer-deps --ignore-scripts
+RUN npm config set registry https://registry.npmmirror.com && \
+    npm install --legacy-peer-deps --ignore-scripts
 COPY frontend/ .
 RUN npm run build:icons && npm run build
 
@@ -10,6 +11,7 @@ RUN npm run build:icons && npm run build
 FROM golang:1.23-alpine AS backend-builder
 WORKDIR /app/backend
 COPY backend/go.mod backend/go.sum ./
+ENV GOPROXY=https://goproxy.cn,direct
 RUN go mod download
 COPY backend/ .
 ARG TARGETARCH
