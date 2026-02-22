@@ -1,9 +1,11 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { useDisplay } from 'vuetify'
 import api from '@/utils/api'
 import { useSnackbar } from '@/composables/useSnackbar'
 
 const snackbar = useSnackbar()
+const { smAndDown } = useDisplay()
 
 // 数据
 const groupList = ref([])
@@ -277,12 +279,12 @@ onMounted(async () => {
       <template v-else>
         <!-- 统计卡片 -->
         <VRow class="mb-4">
-          <VCol cols="12" sm="4">
+          <VCol cols="6" sm="4">
             <VCard class="stat-card" style="height: 120px;">
-              <VCardText class="d-flex align-center justify-space-between h-100 pa-5">
+              <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
                 <div>
                   <div class="text-body-2 text-medium-emphasis mb-1">重复组数</div>
-                  <div class="text-h4 font-weight-bold">
+                  <div class="text-h4 font-weight-bold stat-number">
                     {{ dupGroupCount.toLocaleString() }}
                   </div>
                 </div>
@@ -292,12 +294,12 @@ onMounted(async () => {
               </VCardText>
             </VCard>
           </VCol>
-          <VCol cols="12" sm="4">
+          <VCol cols="6" sm="4">
             <VCard class="stat-card" style="height: 120px;">
-              <VCardText class="d-flex align-center justify-space-between h-100 pa-5">
+              <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
                 <div>
                   <div class="text-body-2 text-medium-emphasis mb-1">缓存条目</div>
-                  <div class="text-h4 font-weight-bold">
+                  <div class="text-h4 font-weight-bold stat-number">
                     {{ cacheStatus.total_items.toLocaleString() }}
                   </div>
                 </div>
@@ -309,7 +311,7 @@ onMounted(async () => {
           </VCol>
           <VCol cols="12" sm="4">
             <VCard class="stat-card" style="height: 120px;">
-              <VCardText class="d-flex align-center justify-space-between h-100 pa-5">
+              <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
                 <div>
                   <div class="text-body-2 text-medium-emphasis mb-1">最后分析</div>
                   <div class="text-h6 font-weight-bold">
@@ -339,28 +341,29 @@ onMounted(async () => {
               </div>
             </div>
 
-            <VBtn
-              color="primary"
-              :loading="analyzing"
-              :disabled="analyzing || cleaning"
-              @click="startAnalyze"
-            >
-              <VIcon icon="ri-play-fill" class="me-1" />
-              {{ analyzing ? '分析中...' : '开始分析' }}
-            </VBtn>
+            <div class="d-flex flex-wrap gap-3 action-buttons">
+              <VBtn
+                color="primary"
+                :loading="analyzing"
+                :disabled="analyzing || cleaning"
+                @click="startAnalyze"
+              >
+                <VIcon icon="ri-play-fill" class="me-1" />
+                {{ analyzing ? '分析中...' : '开始分析' }}
+              </VBtn>
 
-            <VBtn
-              v-if="dupGroupCount > 0"
-              color="error"
-              variant="tonal"
-              class="ms-3"
-              :loading="cleaning"
-              :disabled="analyzing || cleaning"
-              @click="openCleanDialog"
-            >
-              <VIcon icon="ri-delete-bin-line" class="me-1" />
-              {{ cleaning ? '清理中...' : '自动清理' }}
-            </VBtn>
+              <VBtn
+                v-if="dupGroupCount > 0"
+                color="error"
+                variant="tonal"
+                :loading="cleaning"
+                :disabled="analyzing || cleaning"
+                @click="openCleanDialog"
+              >
+                <VIcon icon="ri-delete-bin-line" class="me-1" />
+                {{ cleaning ? '清理中...' : '自动清理' }}
+              </VBtn>
+            </div>
 
             <!-- 分析结果 -->
             <VCard v-if="analyzeResult && !analyzeResult.error" variant="tonal" color="success" class="mt-4">
@@ -441,47 +444,71 @@ onMounted(async () => {
             <VExpansionPanels variant="accordion">
               <VExpansionPanel v-for="group in groupList" :key="group.group_key">
                 <VExpansionPanelTitle>
-                  <div class="d-flex align-center gap-2 flex-wrap">
-                    <VChip size="small" color="warning">{{ group.count }} 个重复</VChip>
-                    <VChip size="x-small" :color="getGroupTypeColor(group)" variant="tonal">{{ getGroupTypeLabel(group) }}</VChip>
-                    <span class="text-body-2 font-weight-medium">{{ formatGroupTitle(group) }}</span>
+                  <div class="panel-title-content">
+                    <div class="d-flex align-center gap-2">
+                      <VChip size="small" color="warning">{{ group.count }} 个重复</VChip>
+                      <VChip size="small" :color="getGroupTypeColor(group)" variant="tonal">{{ getGroupTypeLabel(group) }}</VChip>
+                    </div>
+                    <span class="text-body-2 font-weight-medium panel-title-name">{{ formatGroupTitle(group) }}</span>
                   </div>
                 </VExpansionPanelTitle>
                 <VExpansionPanelText>
-                  <VTable density="compact">
-                    <thead>
-                      <tr>
-                        <th style="width: 300px;">名称</th>
-                        <th style="width: 80px;">类型</th>
-                        <th>文件路径</th>
-                        <th style="width: 100px;">文件大小</th>
-                        <th style="width: 80px;">操作</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-for="item in group.items" :key="item.id">
-                        <td>{{ item.name }}</td>
-                        <td>
-                          <VChip size="x-small" :color="item.type === 'Movie' ? 'primary' : 'info'" variant="tonal">
-                            {{ item.type === 'Movie' ? '电影' : item.type === 'Series' ? '剧集' : item.type === 'Episode' ? '单集' : item.type }}
-                          </VChip>
-                        </td>
-                        <td class="text-body-2 path-cell">{{ item.path }}</td>
-                        <td>{{ formatSize(item.file_size) }}</td>
-                        <td class="text-center">
-                          <VBtn
-                            size="small"
-                            variant="text"
-                            color="primary"
-                            @click="openInEmby(item)"
-                          >
-                            <VIcon icon="ri-external-link-line" size="14" class="me-1" />
-                            Emby
-                          </VBtn>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </VTable>
+                  <!-- 移动端：卡片布局 -->
+                  <div v-if="smAndDown" class="mobile-items">
+                    <div v-for="item in group.items" :key="item.id" class="mobile-item pa-3">
+                      <div class="d-flex align-center justify-space-between mb-2">
+                        <span class="text-body-2 font-weight-medium text-truncate me-2">{{ item.name }}</span>
+                        <VChip size="x-small" :color="item.type === 'Movie' ? 'primary' : 'info'" variant="tonal" class="flex-shrink-0">
+                          {{ item.type === 'Movie' ? '电影' : item.type === 'Series' ? '剧集' : item.type === 'Episode' ? '单集' : item.type }}
+                        </VChip>
+                      </div>
+                      <div class="text-caption text-medium-emphasis path-cell mb-2">{{ item.path }}</div>
+                      <div class="d-flex align-center justify-space-between">
+                        <span class="text-caption text-medium-emphasis">{{ formatSize(item.file_size) }}</span>
+                        <VBtn size="x-small" variant="text" color="primary" @click="openInEmby(item)">
+                          <VIcon icon="ri-external-link-line" size="14" class="me-1" />
+                          Emby
+                        </VBtn>
+                      </div>
+                    </div>
+                  </div>
+                  <!-- 桌面端：表格布局 -->
+                  <div v-else class="table-responsive">
+                    <VTable density="compact">
+                      <thead>
+                        <tr>
+                          <th style="width: 300px;">名称</th>
+                          <th style="width: 80px;">类型</th>
+                          <th>文件路径</th>
+                          <th style="width: 100px;">文件大小</th>
+                          <th style="width: 80px;">操作</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="item in group.items" :key="item.id">
+                          <td>{{ item.name }}</td>
+                          <td>
+                            <VChip size="x-small" :color="item.type === 'Movie' ? 'primary' : 'info'" variant="tonal">
+                              {{ item.type === 'Movie' ? '电影' : item.type === 'Series' ? '剧集' : item.type === 'Episode' ? '单集' : item.type }}
+                            </VChip>
+                          </td>
+                          <td class="text-body-2 path-cell">{{ item.path }}</td>
+                          <td>{{ formatSize(item.file_size) }}</td>
+                          <td class="text-center">
+                            <VBtn
+                              size="small"
+                              variant="text"
+                              color="primary"
+                              @click="openInEmby(item)"
+                            >
+                              <VIcon icon="ri-external-link-line" size="14" class="me-1" />
+                              Emby
+                            </VBtn>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </VTable>
+                  </div>
                 </VExpansionPanelText>
               </VExpansionPanel>
             </VExpansionPanels>
@@ -502,7 +529,7 @@ onMounted(async () => {
     </template>
 
     <!-- 清理预览对话框 -->
-    <VDialog v-model="showCleanDialog" max-width="1600" scrollable transition="none">
+    <VDialog v-model="showCleanDialog" :max-width="smAndDown ? undefined : 1600" :fullscreen="smAndDown" scrollable transition="none">
       <VCard class="clean-dialog-card" data-no-hover>
         <VCardTitle class="d-flex align-center pa-5 pb-4">
           <VAvatar color="error" variant="tonal" size="36" rounded="lg" class="me-3">
@@ -688,6 +715,78 @@ onMounted(async () => {
     &:last-child {
       border-block-end: none;
     }
+  }
+}
+
+.table-responsive {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.mobile-items {
+  .mobile-item {
+    border-block-end: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+
+    &:last-child {
+      border-block-end: none;
+    }
+  }
+}
+
+.panel-title-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+
+  .panel-title-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+// 移动端响应式适配
+@media (max-width: 599.98px) {
+  .panel-title-content {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+
+    .panel-title-name {
+      white-space: normal;
+      word-break: break-all;
+    }
+  }
+
+  .stat-card-text {
+    padding: 12px !important;
+  }
+
+  .stat-number {
+    font-size: 1.25rem !important;
+  }
+
+  .stat-icon {
+    width: 40px;
+    height: 40px;
+  }
+
+  .action-buttons .v-btn {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .table-responsive .v-table > .v-table__wrapper > table {
+    min-width: 600px;
+  }
+}
+
+// 平板适配
+@media (min-width: 600px) and (max-width: 959.98px) {
+  .stat-number {
+    font-size: 1.5rem !important;
   }
 }
 </style>

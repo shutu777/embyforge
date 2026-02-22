@@ -1,9 +1,11 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { useDisplay } from 'vuetify'
 import api from '@/utils/api'
 import { useSnackbar } from '@/composables/useSnackbar'
 
 const snackbar = useSnackbar()
+const { smAndDown } = useDisplay()
 const page = ref(1)
 const pageSize = ref(20)
 const searchInput = ref('')
@@ -171,7 +173,7 @@ onMounted(async () => { await Promise.all([fetchList(), fetchCacheStatus()]) })
           <VCol cols="12" sm="6">
             <VTextField
               v-model="searchInput"
-              placeholder="搜索节目名称..."
+              placeholder="搜索节目名称（中/英文）或 TMDB ID..."
               density="compact"
               variant="outlined"
               hide-details
@@ -188,10 +190,12 @@ onMounted(async () => { await Promise.all([fetchList(), fetchCacheStatus()]) })
           <VExpansionPanels variant="accordion">
             <VExpansionPanel v-for="group in groups" :key="group.tmdb_id">
               <VExpansionPanelTitle>
-                <div class="d-flex align-center gap-2 flex-wrap">
-                  <VChip size="small" color="primary">{{ group.season_count }} 季</VChip>
-                  <VChip size="x-small" color="info" variant="tonal">TMDB {{ group.tmdb_id }}</VChip>
-                  <span class="text-body-2 font-weight-medium">{{ group.name }}</span>
+                <div class="panel-title-content">
+                  <div class="d-flex align-center gap-2">
+                    <VChip size="small" color="primary">{{ group.season_count }} 季</VChip>
+                    <VChip size="small" color="info" variant="tonal">TMDB {{ group.tmdb_id }}</VChip>
+                  </div>
+                  <span class="text-body-2 font-weight-medium panel-title-name">{{ group.name }}</span>
                 </div>
               </VExpansionPanelTitle>
               <VExpansionPanelText>
@@ -205,7 +209,29 @@ onMounted(async () => { await Promise.all([fetchList(), fetchCacheStatus()]) })
                     删除该节目缓存
                   </VBtn>
                 </div>
-                <VTable density="compact">
+                <!-- 移动端：卡片布局 -->
+                <div v-if="smAndDown" class="mobile-items">
+                  <div v-for="season in group.seasons" :key="season.id" class="mobile-item pa-3">
+                    <div class="d-flex align-center justify-space-between mb-1">
+                      <span class="text-body-2 font-weight-medium">Season {{ season.season_number }}</span>
+                      <span class="text-body-2">{{ season.episode_count }} 集</span>
+                    </div>
+                    <div class="text-caption text-medium-emphasis mb-1">{{ season.season_name || '-' }}</div>
+                    <div class="d-flex align-center justify-space-between">
+                      <span class="text-caption text-medium-emphasis">{{ formatTime(season.cached_at) }}</span>
+                      <div class="d-flex gap-1">
+                        <VBtn size="x-small" variant="text" color="primary" @click="openEdit(season)">
+                          <VIcon icon="ri-edit-line" size="14" />
+                        </VBtn>
+                        <VBtn size="x-small" variant="text" color="error" @click="deleteSeason(season.id)">
+                          <VIcon icon="ri-delete-bin-line" size="14" />
+                        </VBtn>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <!-- 桌面端：表格布局 -->
+                <VTable v-else density="compact">
                   <thead>
                     <tr>
                       <th>季</th>
@@ -314,5 +340,42 @@ onMounted(async () => { await Promise.all([fetchList(), fetchCacheStatus()]) })
 
 .h-100 {
   height: 100%;
+}
+
+.mobile-items {
+  .mobile-item {
+    border-block-end: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+
+    &:last-child {
+      border-block-end: none;
+    }
+  }
+}
+
+.panel-title-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+
+  .panel-title-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 599.98px) {
+  .panel-title-content {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+
+    .panel-title-name {
+      white-space: normal;
+      word-break: break-all;
+    }
+  }
 }
 </style>

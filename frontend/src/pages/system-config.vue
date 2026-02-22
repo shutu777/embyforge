@@ -31,7 +31,11 @@ async function fetchConfigs() {
   loading.value = true
   try {
     const { data } = await api.get('/system-config')
-    configs.value = (data.data || []).map(c => ({ ...c, editValue: c.value }))
+    // 过滤掉 symedia 相关配置项（在 symedia-config 页面单独管理）
+    const symediaKeys = ['symedia_url', 'symedia_auth_token']
+    configs.value = (data.data || [])
+      .filter(c => !symediaKeys.includes(c.key))
+      .map(c => ({ ...c, editValue: c.value }))
   } catch (e) {
     snackbar.error('获取配置失败')
   } finally {

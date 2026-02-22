@@ -16,8 +16,8 @@ import (
 
 // Feature: media-cache-scan, Property 3: 同步完整性
 // Validates: Requirements 2.1, 3.1
-// 对于任意一组 Emby 媒体条目（包含 Series 及其季信息），同步操作后，
-// media_cache 应包含完全相同的条目集合，season_cache 应包含所有 Series 的季信息。
+// 对于任意一组 Emby 媒体条目（包含 Movie、Series、Episode），同步操作后，
+// media_cache 应包含完全相同的条目集合，season_cache 应从 Episode 数据聚合生成。
 func TestProperty_SyncCompleteness(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "sync_completeness.db")
@@ -32,8 +32,8 @@ func TestProperty_SyncCompleteness(t *testing.T) {
 
 	rapid.Check(t, func(t *rapid.T) {
 		// 生成随机媒体条目
-		movieCount := rapid.IntRange(0, 15).Draw(t, "movieCount")
-		seriesCount := rapid.IntRange(0, 5).Draw(t, "seriesCount")
+		movieCount := rapid.IntRange(0, 10).Draw(t, "movieCount")
+		seriesCount := rapid.IntRange(0, 3).Draw(t, "seriesCount")
 
 		var allItems []emby.MediaItem
 
@@ -54,18 +54,17 @@ func TestProperty_SyncCompleteness(t *testing.T) {
 			})
 		}
 
-		// 生成 Series 条目及其季信息
-		type seriesSeasonData struct {
-			seriesID string
-			seasons  []emby.MediaItem
-		}
-		var seriesSeasons []seriesSeasonData
+		// 记录每个 Series 每季的 Episode 数量，用于验证季缓存
+		// key: "seriesID:seasonNumber" -> episodeCount
+		expectedSeasons := make(map[string]int)
 
+		// 生成 Series 条目及其 Episode 条目
 		for i := 0; i < seriesCount; i++ {
 			seriesID := fmt.Sprintf("series-%d", i)
+			seriesName := rapid.StringMatching(`[A-Za-z0-9 ]{1,20}`).Draw(t, fmt.Sprintf("seriesName_%d", i))
 			allItems = append(allItems, emby.MediaItem{
 				ID:        seriesID,
-				Name:      rapid.StringMatching(`[A-Za-z0-9 ]{1,20}`).Draw(t, fmt.Sprintf("seriesName_%d", i)),
+				Name:      seriesName,
 				Type:      "Series",
 				ImageTags: map[string]string{},
 				Path:      fmt.Sprintf("/media/series/%d", i),
@@ -74,50 +73,36 @@ func TestProperty_SyncCompleteness(t *testing.T) {
 				},
 			})
 
-			// 生成该 Series 的季
-			seasonCount := rapid.IntRange(1, 4).Draw(t, fmt.Sprintf("seasonCount_%d", i))
-			var seasons []emby.MediaItem
+			// 生成该 Series 的 Episode 条目（按季分组）
+			seasonCount := rapid.IntRange(1, 3).Draw(t, fmt.Sprintf("seasonCount_%d", i))
 			for j := 1; j <= seasonCount; j++ {
-				seasons = append(seasons, emby.MediaItem{
-					ID:          fmt.Sprintf("season-%d-%d", i, j),
-					Name:        fmt.Sprintf("Season %d", j),
-					Type:        "Season",
-					IndexNumber: j,
-					ChildCount:  rapid.IntRange(1, 24).Draw(t, fmt.Sprintf("epCount_%d_%d", i, j)),
-				})
+				epCount := rapid.IntRange(1, 6).Draw(t, fmt.Sprintf("epCount_%d_%d", i, j))
+				expectedSeasons[fmt.Sprintf("%s:%d", seriesID, j)] = epCount
+
+				for k := 1; k <= epCount; k++ {
+					allItems = append(allItems, emby.MediaItem{
+						ID:                fmt.Sprintf("ep-%d-%d-%d", i, j, k),
+						Name:              fmt.Sprintf("S%dE%d", j, k),
+						Type:              "Episode",
+						ImageTags:         map[string]string{},
+						Path:              fmt.Sprintf("/media/series/%d/S%d/E%d", i, j, k),
+						ProviderIds:       map[string]string{},
+						IndexNumber:       k,
+						ParentIndexNumber: j,
+						SeriesID:          seriesID,
+						SeriesName:        seriesName,
+					})
+				}
 			}
-			seriesSeasons = append(seriesSeasons, seriesSeasonData{
-				seriesID: seriesID,
-				seasons:  seasons,
-			})
 		}
 
 		// 创建模拟 Emby 服务器
-		mux := http.NewServeMux()
-		mux.HandleFunc("/emby/Items", func(w http.ResponseWriter, r *http.Request) {
-			parentID := r.URL.Query().Get("ParentId")
-			if parentID != "" {
-				// 返回指定 Series 的季信息
-				for _, ss := range seriesSeasons {
-					if ss.seriesID == parentID {
-						json.NewEncoder(w).Encode(emby.MediaItemsResponse{
-							Items:            ss.seasons,
-							TotalRecordCount: len(ss.seasons),
-						})
-						return
-					}
-				}
-				json.NewEncoder(w).Encode(emby.MediaItemsResponse{})
-				return
-			}
-			// 返回所有媒体条目
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(emby.MediaItemsResponse{
 				Items:            allItems,
 				TotalRecordCount: len(allItems),
 			})
-		})
-
-		server := httptest.NewServer(mux)
+		}))
 		defer server.Close()
 		client := parseEmbyClient(server)
 
@@ -159,43 +144,28 @@ func TestProperty_SyncCompleteness(t *testing.T) {
 			}
 		}
 
-		// 验证4：season_cache 中应包含所有 Series 的季信息
+		// 验证4：season_cache 应从 Episode 数据聚合生成
 		var cachedSeasons []model.SeasonCache
 		if err := db.Find(&cachedSeasons).Error; err != nil {
 			t.Fatalf("查询季缓存失败: %v", err)
 		}
 
-		expectedSeasonCount := 0
-		for _, ss := range seriesSeasons {
-			expectedSeasonCount += len(ss.seasons)
+		if len(cachedSeasons) != len(expectedSeasons) {
+			t.Fatalf("季缓存条目数不匹配: got %d, want %d", len(cachedSeasons), len(expectedSeasons))
 		}
-		if len(cachedSeasons) != expectedSeasonCount {
-			t.Fatalf("季缓存条目数不匹配: got %d, want %d", len(cachedSeasons), expectedSeasonCount)
-		}
-		if syncResult.TotalSeasons != expectedSeasonCount {
-			t.Fatalf("同步季数不匹配: got %d, want %d", syncResult.TotalSeasons, expectedSeasonCount)
+		if syncResult.TotalSeasons != len(expectedSeasons) {
+			t.Fatalf("同步季数不匹配: got %d, want %d", syncResult.TotalSeasons, len(expectedSeasons))
 		}
 
-		// 验证5：每个季的关键字段应正确
-		seasonByID := make(map[string]model.SeasonCache)
+		// 验证5：每个季的 Episode 数量应正确
 		for _, sc := range cachedSeasons {
-			seasonByID[sc.SeasonEmbyItemID] = sc
-		}
-		for _, ss := range seriesSeasons {
-			for _, season := range ss.seasons {
-				cached, ok := seasonByID[season.ID]
-				if !ok {
-					t.Fatalf("季 %q (ID=%s) 未在缓存中找到", season.Name, season.ID)
-				}
-				if cached.SeriesEmbyItemID != ss.seriesID {
-					t.Fatalf("季 %s SeriesEmbyItemID 不匹配: got %q, want %q", season.ID, cached.SeriesEmbyItemID, ss.seriesID)
-				}
-				if cached.SeasonNumber != season.IndexNumber {
-					t.Fatalf("季 %s SeasonNumber 不匹配: got %d, want %d", season.ID, cached.SeasonNumber, season.IndexNumber)
-				}
-				if cached.EpisodeCount != season.ChildCount {
-					t.Fatalf("季 %s EpisodeCount 不匹配: got %d, want %d", season.ID, cached.EpisodeCount, season.ChildCount)
-				}
+			key := fmt.Sprintf("%s:%d", sc.SeriesEmbyItemID, sc.SeasonNumber)
+			expected, ok := expectedSeasons[key]
+			if !ok {
+				t.Fatalf("季缓存中存在未预期的条目: SeriesID=%s, SeasonNumber=%d", sc.SeriesEmbyItemID, sc.SeasonNumber)
+			}
+			if sc.EpisodeCount != expected {
+				t.Fatalf("季 %s EpisodeCount 不匹配: got %d, want %d", key, sc.EpisodeCount, expected)
 			}
 		}
 	})

@@ -98,22 +98,23 @@ async function testConnection() {
             />
           </VCol>
           <VCol cols="12">
-            <VBtn
-              type="submit"
-              color="primary"
-              class="me-3"
-              :loading="saving"
-            >
-              保存配置
-            </VBtn>
-            <VBtn
-              color="secondary"
-              variant="outlined"
-              :loading="testing"
-              @click="testConnection"
-            >
-              测试连接
-            </VBtn>
+            <div class="d-flex flex-wrap gap-3">
+              <VBtn
+                type="submit"
+                color="primary"
+                :loading="saving"
+              >
+                保存配置
+              </VBtn>
+              <VBtn
+                color="secondary"
+                variant="outlined"
+                :loading="testing"
+                @click="testConnection"
+              >
+                测试连接
+              </VBtn>
+            </div>
           </VCol>
         </VRow>
       </VForm>

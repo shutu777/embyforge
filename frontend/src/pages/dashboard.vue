@@ -129,12 +129,12 @@ const anomalyChartSeries = computed(() => [{
     <template v-else>
       <!-- 第一行：统计卡片 -->
       <VRow class="mb-4">
-        <VCol v-for="stat in statCards" :key="stat.key" cols="12" sm="6" md="3">
+        <VCol v-for="stat in statCards" :key="stat.key" cols="6" sm="6" md="3">
           <VCard class="dash-card" style="height: 120px;">
-            <VCardText class="d-flex align-center justify-space-between h-100 pa-5">
+            <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
               <div>
                 <div class="text-body-2 text-medium-emphasis mb-1">{{ stat.label }}</div>
-                <div class="text-h4 font-weight-bold">{{ (d[stat.key] || 0).toLocaleString() }}</div>
+                <div class="text-h4 font-weight-bold stat-number">{{ (d[stat.key] || 0).toLocaleString() }}</div>
               </div>
               <div class="stat-icon" :style="{ background: stat.color + '18' }">
                 <VIcon :icon="stat.icon" :color="stat.color" size="24" />
@@ -142,12 +142,12 @@ const anomalyChartSeries = computed(() => [{
             </VCardText>
           </VCard>
         </VCol>
-        <VCol cols="12" sm="6" md="3">
+        <VCol cols="6" sm="6" md="3">
           <VCard class="dash-card" style="height: 120px;">
-            <VCardText class="d-flex align-center justify-space-between h-100 pa-5">
+            <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
               <div>
                 <div class="text-body-2 text-medium-emphasis mb-1">总异常数</div>
-                <div class="text-h4 font-weight-bold">{{ totalAnomalyCount.toLocaleString() }}</div>
+                <div class="text-h4 font-weight-bold stat-number">{{ totalAnomalyCount.toLocaleString() }}</div>
               </div>
               <div class="stat-icon" :style="{ background: '#ef444418' }">
                 <VIcon icon="ri-alert-fill" color="#ef4444" size="24" />
@@ -354,5 +354,28 @@ const anomalyChartSeries = computed(() => [{
 
 .h-100 {
   height: 100%;
+}
+
+// 移动端响应式适配
+@media (max-width: 599.98px) {
+  .stat-card-text {
+    padding: 12px !important;
+  }
+
+  .stat-number {
+    font-size: 1.25rem !important;
+  }
+
+  .stat-icon {
+    width: 40px;
+    height: 40px;
+  }
+}
+
+// 平板适配
+@media (min-width: 600px) and (max-width: 959.98px) {
+  .stat-number {
+    font-size: 1.5rem !important;
+  }
 }
 </style>

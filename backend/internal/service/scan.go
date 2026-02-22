@@ -357,14 +357,6 @@ func DetectEpisodeMappingAnomalies(seriesList []SeriesInfo) []model.EpisodeMappi
 			}
 		}
 		
-		// 调试日志：输出 TMDB 季数统计
-		if series.TmdbID == 4057 || series.TmdbID == 71795 {
-			log.Printf("🔍 [调试] 剧集: %s (TMDB ID=%d)", series.Name, series.TmdbID)
-			log.Printf("   TMDB 总季数: %d", len(series.TmdbSeasons))
-			log.Printf("   TMDB 有效季数: %d", tmdbSeasonCount)
-			log.Printf("   本地季数: %d", localSeasonCount)
-		}
-
 		// 对比每个本地季
 		for _, local := range series.LocalSeasons {
 			if local.SeasonNumber <= 0 {

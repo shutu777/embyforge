@@ -1,35 +1,16 @@
 package model
 
 import (
-	"path/filepath"
 	"testing"
 
-	"gorm.io/gorm"
 	"pgregory.net/rapid"
 )
-
-// setupSystemConfigTestDB 创建测试数据库并返回 gorm.DB
-func setupSystemConfigTestDB(t *testing.T) *gorm.DB {
-	t.Helper()
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-	db, err := InitDB(dbPath)
-	if err != nil {
-		t.Fatalf("InitDB 失败: %v", err)
-	}
-	sqlDB, err := db.DB()
-	if err != nil {
-		t.Fatalf("获取底层 DB 失败: %v", err)
-	}
-	t.Cleanup(func() { sqlDB.Close() })
-	return db
-}
 
 // Feature: system-config, Property 1: SystemConfig model round-trip
 // Validates: Requirements 1.1
 // 对于任意有效的 SystemConfig（非空 key、value、description），保存后再按 key 读取应返回等价的记录。
 func TestProperty_SystemConfigRoundTrip(t *testing.T) {
-	db := setupSystemConfigTestDB(t)
+	db := setupTestDB(t)
 
 	rapid.Check(t, func(t *rapid.T) {
 		// 生成随机的配置项
@@ -74,7 +55,7 @@ func TestProperty_SystemConfigRoundTrip(t *testing.T) {
 // Validates: Requirements 1.2
 // 对于任意 key，插入一条记录后再插入同 key 的记录应失败，且数据库中该 key 只有一条记录。
 func TestProperty_SystemConfigKeyUniqueness(t *testing.T) {
-	db := setupSystemConfigTestDB(t)
+	db := setupTestDB(t)
 
 	rapid.Check(t, func(t *rapid.T) {
 		key := rapid.StringMatching(`[a-z][a-z0-9_]{2,30}`).Draw(t, "key")

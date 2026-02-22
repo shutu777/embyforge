@@ -202,6 +202,7 @@ func main() {
 		protected.POST("/cleanup/duplicate-media", scanHandler.CleanupDuplicateMedia)
 		protected.GET("/cleanup/duplicate-media/preview", scanHandler.PreviewDuplicateCleanup)
 		protected.POST("/cleanup/scrape-anomaly", scanHandler.CleanupScrapeAnomalies)
+		protected.GET("/cleanup/missing-poster-items", scanHandler.GetMissingPosterItems)
 		protected.POST("/cleanup/batch-find-posters", scanHandler.BatchFindPosters)
 		protected.POST("/cleanup/find-single-poster", scanHandler.FindSinglePoster)
 

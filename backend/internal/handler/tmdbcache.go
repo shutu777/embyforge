@@ -38,11 +38,33 @@ func (h *TmdbCacheHandler) GetTmdbCacheList(c *gin.Context) {
 	if pageSize < 1 || pageSize > 100 {
 		pageSize = 20
 	}
-	var totalCount int64
-	cq := h.DB.Model(&model.TmdbCache{})
-	if search != "" {
-		cq = cq.Where("name LIKE ?", "%"+search+"%")
+
+	// 构建搜索条件
+	// 支持：名称关键字（英文/中文）、TMDB ID
+	buildSearchCondition := func(q *gorm.DB) *gorm.DB {
+		if search == "" {
+			return q
+		}
+		// 如果是纯数字，按 TMDB ID 精确匹配 + 英文名模糊匹配
+		if tmdbID, err := strconv.Atoi(search); err == nil {
+			return q.Where("name LIKE ? OR tmdb_id = ?", "%"+search+"%", tmdbID)
+		}
+		// 非数字：先在 tmdb_caches 中搜英文名
+		// 同时在 media_caches 中搜中文名（Series 类型），提取 TMDB ID 关联
+		var matchedTmdbIDs []int
+		h.DB.Model(&model.MediaCache{}).
+			Where("type = 'Series' AND name LIKE ?", "%"+search+"%").
+			Where("provider_ids LIKE '%Tmdb%'").
+			Pluck("DISTINCT CAST(json_extract(provider_ids, '$.Tmdb') AS INTEGER)", &matchedTmdbIDs)
+
+		if len(matchedTmdbIDs) > 0 {
+			return q.Where("name LIKE ? OR tmdb_id IN ?", "%"+search+"%", matchedTmdbIDs)
+		}
+		return q.Where("name LIKE ?", "%"+search+"%")
 	}
+
+	var totalCount int64
+	cq := buildSearchCondition(h.DB.Model(&model.TmdbCache{}))
 	cq.Distinct("tmdb_id").Count(&totalCount)
 
 	type groupRow struct {
@@ -53,10 +75,7 @@ func (h *TmdbCacheHandler) GetTmdbCacheList(c *gin.Context) {
 	}
 	var groupRows []groupRow
 	offset := (page - 1) * pageSize
-	iq := h.DB.Model(&model.TmdbCache{})
-	if search != "" {
-		iq = iq.Where("name LIKE ?", "%"+search+"%")
-	}
+	iq := buildSearchCondition(h.DB.Model(&model.TmdbCache{}))
 	iq.Select("tmdb_id, COUNT(*) as season_count, MAX(name) as name, MAX(cached_at) as cached_at").
 		Group("tmdb_id").Order("cached_at DESC").Offset(offset).Limit(pageSize).Find(&groupRows)
 	tmdbIDs := make([]int, len(groupRows))

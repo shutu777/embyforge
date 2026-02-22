@@ -2,7 +2,6 @@ package model
 
 import (
 	"encoding/json"
-	"path/filepath"
 	"testing"
 
 	"embyforge/internal/emby"
@@ -61,17 +60,7 @@ func TestProperty_ProviderIDsRoundTrip(t *testing.T) {
 // Validates: Requirements 1.3
 // 对于任意一组包含重复 emby_item_id 的媒体条目，写入缓存后每个 emby_item_id 只应出现一次。
 func TestProperty_CacheUniqueness(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-	db, err := InitDB(dbPath)
-	if err != nil {
-		t.Fatalf("InitDB 失败: %v", err)
-	}
-	sqlDB, err := db.DB()
-	if err != nil {
-		t.Fatalf("获取底层 DB 失败: %v", err)
-	}
-	t.Cleanup(func() { sqlDB.Close() })
+	db := setupTestDB(t)
 
 	rapid.Check(t, func(t *rapid.T) {
 		// 清空缓存表

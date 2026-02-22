@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed, watch, onMounted, nextTick } from 'vue'
+import { useDisplay } from 'vuetify'
 import { useI18n } from 'vue-i18n'
 import { useSnackbar } from '@/composables/useSnackbar'
 import { v4 as uuidv4 } from 'uuid'
@@ -7,6 +8,7 @@ import api from '@/utils/api'
 
 const { t } = useI18n()
 const snackbar = useSnackbar()
+const { smAndDown } = useDisplay()
 
 // LocalStorage 键名
 const STORAGE_KEY = 'rendering_words_series_list'
@@ -137,6 +139,26 @@ const previewText = computed(() => {
   return text.trim()
 })
 
+// 复制到剪贴板工具函数，优先使用 Clipboard API，失败时 fallback 到 execCommand
+async function copyToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text)
+    return
+  }
+  // Fallback: 创建临时 textarea
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.style.position = 'fixed'
+  textarea.style.left = '-9999px'
+  document.body.appendChild(textarea)
+  textarea.select()
+  try {
+    document.execCommand('copy')
+  } finally {
+    document.body.removeChild(textarea)
+  }
+}
+
 // 复制单条规则
 async function copyRule(rule) {
   if (!currentSeries.value.tmdbId) {
@@ -146,7 +168,7 @@ async function copyRule(rule) {
   
   const text = generateRuleText(rule, currentSeries.value.tmdbId, currentSeries.value.type)
   try {
-    await navigator.clipboard.writeText(text)
+    await copyToClipboard(text)
     snackbar.success(t('renderingWords.messages.copiedSuccess'))
   } catch (err) {
     snackbar.error(t('renderingWords.messages.copyFailed'))
@@ -166,7 +188,7 @@ async function copyAll() {
   }
   
   try {
-    await navigator.clipboard.writeText(text)
+    await copyToClipboard(text)
     if (selectedSeries.value.length > 0) {
       snackbar.success(t('renderingWords.messages.batchCopied', { count: selectedSeries.value.length }))
     } else {
@@ -272,7 +294,7 @@ function deleteSeries(seriesId) {
 async function copySeriesConfig(series) {
   const text = generateSeriesText(series)
   try {
-    await navigator.clipboard.writeText(text)
+    await copyToClipboard(text)
     snackbar.success(t('renderingWords.messages.copiedSuccess'))
   } catch (err) {
     snackbar.error(t('renderingWords.messages.copyFailed'))
@@ -415,11 +437,11 @@ onMounted(() => {
           size="32"
           color="primary"
         />
-        <h2 class="text-h4 font-weight-bold">
+        <h2 class="text-h4 font-weight-bold page-title">
           {{ t('renderingWords.title') }}
         </h2>
       </div>
-      <div class="d-flex justify-space-between align-center">
+      <div class="d-flex flex-wrap justify-space-between align-center gap-2">
         <p class="text-body-1 text-medium-emphasis mb-0">
           {{ t('renderingWords.description') }}
         </p>
@@ -429,6 +451,7 @@ onMounted(() => {
           variant="tonal"
           color="primary"
           prepend-icon="ri-book-open-line"
+          :size="smAndDown ? 'small' : 'default'"
         >
           {{ t('renderingWords.wikiLink') }}
         </VBtn>
@@ -832,7 +855,8 @@ onMounted(() => {
     <!-- 导入对话框 -->
     <VDialog
       v-model="importDialog"
-      max-width="800"
+      :max-width="smAndDown ? undefined : 800"
+      :fullscreen="smAndDown"
       scrollable
       data-no-hover
     >
@@ -1118,5 +1142,17 @@ onMounted(() => {
   width: 100%;
   display: flex;
   flex-direction: column;
+}
+
+/* 移动端响应式适配 */
+@media (max-width: 599px) {
+  .page-title {
+    font-size: 1.25rem !important;
+  }
+
+  .preview-container {
+    min-height: 150px;
+    max-height: 300px;
+  }
 }
 </style>

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 )
@@ -350,10 +351,24 @@ func (c *Client) GetChildItemCount(ctx context.Context, parentID string, itemTyp
 }
 
 
-// DeleteVersion 删除 Emby 媒体条目的某个版本文件
-// Emby API: POST /emby/Items/{itemId}/DeleteVersion
-// 适用于删除重复媒体中体积较小的版本
+// DeleteVersion 删除 Emby 媒体条目的某个版本文件（带 fallback 兼容）
+// 主端点: POST /emby/Items/{itemId}/DeleteVersion
+// 备用端点: DELETE /emby/Items/{itemId}
+// 主端点失败时自动尝试备用端点，兼容不同版本的 Emby 服务器
 func (c *Client) DeleteVersion(ctx context.Context, itemID string) error {
+	// 尝试主端点
+	err := c.deleteVersionPrimary(ctx, itemID)
+	if err == nil {
+		return nil
+	}
+	log.Printf("主删除版本端点失败，尝试备用端点: %v", err)
+	// 尝试备用端点
+	return c.deleteItemFallback(ctx, itemID)
+}
+
+// deleteVersionPrimary 使用主端点删除版本
+// POST /emby/Items/{itemId}/DeleteVersion
+func (c *Client) deleteVersionPrimary(ctx context.Context, itemID string) error {
 	url := fmt.Sprintf("%s/emby/Items/%s/DeleteVersion", c.baseURL(), itemID)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
@@ -377,10 +392,24 @@ func (c *Client) DeleteVersion(ctx context.Context, itemID string) error {
 	return nil
 }
 
-// DeleteItem 删除 Emby 媒体条目
-// Emby API: POST /emby/Items/Delete?Ids={itemId}
-// 适用于删除刮削异常等需要完全移除的条目
+// DeleteItem 删除 Emby 媒体条目（带 fallback 兼容）
+// 主端点: POST /emby/Items/Delete?Ids={itemId}
+// 备用端点: DELETE /emby/Items/{itemId}
+// 主端点失败时自动尝试备用端点，兼容不同版本的 Emby 服务器
 func (c *Client) DeleteItem(ctx context.Context, itemID string) error {
+	// 尝试主端点
+	err := c.deleteItemPrimary(ctx, itemID)
+	if err == nil {
+		return nil
+	}
+	log.Printf("主删除端点失败，尝试备用端点: %v", err)
+	// 尝试备用端点
+	return c.deleteItemFallback(ctx, itemID)
+}
+
+// deleteItemPrimary 使用主端点删除条目
+// POST /emby/Items/Delete?Ids={itemId}
+func (c *Client) deleteItemPrimary(ctx context.Context, itemID string) error {
 	url := fmt.Sprintf("%s/emby/Items/Delete?Ids=%s", c.baseURL(), itemID)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
@@ -399,6 +428,32 @@ func (c *Client) DeleteItem(ctx context.Context, itemID string) error {
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("Emby 删除条目失败，状态码 %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// deleteItemFallback 使用备用端点删除条目
+// DELETE /emby/Items/{itemId}
+func (c *Client) deleteItemFallback(ctx context.Context, itemID string) error {
+	url := fmt.Sprintf("%s/emby/Items/%s", c.baseURL(), itemID)
+
+	req, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
+	if err != nil {
+		return fmt.Errorf("创建备用删除条目请求失败: %w", err)
+	}
+
+	req.Header.Set("X-Emby-Token", c.APIKey)
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("备用删除条目请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("Emby 备用删除条目失败，状态码 %d: %s", resp.StatusCode, string(body))
 	}
 
 	return nil

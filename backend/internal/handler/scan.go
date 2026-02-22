@@ -482,6 +482,8 @@ func (h *ScanHandler) CleanupDuplicateMedia(c *gin.Context) {
 		}
 		if len(successIDs) > 0 {
 			h.DB.Where("emby_item_id IN ?", successIDs).Delete(&model.DuplicateMedia{})
+			// 同时清理 media_caches 中对应的缓存记录
+			h.DB.Where("emby_item_id IN ?", successIDs).Delete(&model.MediaCache{})
 		}
 
 		// 清理只剩一条记录的分组（不再是重复）
@@ -906,6 +908,15 @@ func (h *ScanHandler) FindSinglePoster(c *gin.Context) {
 	})
 }
 
+// GetMissingPosterItems GET /api/cleanup/missing-poster-items - 获取所有缺少封面的刮削异常条目
+func (h *ScanHandler) GetMissingPosterItems(c *gin.Context) {
+	var items []model.ScrapeAnomaly
+	h.DB.Where("missing_poster = ?", true).Order("id ASC").Find(&items)
+	c.JSON(http.StatusOK, gin.H{
+		"data": items,
+	})
+}
+
 // GetAnalysisStatus 获取各分析模块的最后分析时间和异常数量
 func (h *ScanHandler) GetAnalysisStatus(c *gin.Context) {
 	type moduleStatus struct {
@@ -1064,26 +1075,11 @@ func (h *ScanHandler) GetEpisodeMappingAnomalies(c *gin.Context) {
 
 	var groups []EpisodeMappingGroup
 	if len(embyItemIDs) > 0 {
-		// 获取异常记录（用于显示差异）
+		// 获取异常记录
 		var anomalies []model.EpisodeMappingAnomaly
 		h.DB.Where("emby_item_id IN ?", embyItemIDs).
 			Order("season_number ASC").
 			Find(&anomalies)
-
-		// 获取所有季的完整信息（从 season_cache）
-		var seasonCaches []model.SeasonCache
-		h.DB.Where("series_emby_item_id IN ?", embyItemIDs).
-			Order("season_number ASC").
-			Find(&seasonCaches)
-
-		// 构建 emby_item_id -> 季信息的映射
-		seasonMap := make(map[string]map[int]model.SeasonCache) // emby_item_id -> season_number -> SeasonCache
-		for _, sc := range seasonCaches {
-			if _, exists := seasonMap[sc.SeriesEmbyItemID]; !exists {
-				seasonMap[sc.SeriesEmbyItemID] = make(map[int]model.SeasonCache)
-			}
-			seasonMap[sc.SeriesEmbyItemID][sc.SeasonNumber] = sc
-		}
 
 		// 构建 emby_item_id -> 异常记录的映射
 		anomalyMap := make(map[string]map[int]model.EpisodeMappingAnomaly) // emby_item_id -> season_number -> Anomaly
@@ -1098,31 +1094,12 @@ func (h *ScanHandler) GetEpisodeMappingAnomalies(c *gin.Context) {
 			anomalyMap[a.EmbyItemID][a.SeasonNumber] = a
 		}
 
-		// 获取 TMDB 缓存数据
-		tmdbIDs := make([]int, 0)
-		for _, a := range seriesInfoMap {
-			tmdbIDs = append(tmdbIDs, a.TmdbID)
-		}
-		var tmdbCaches []model.TmdbCache
-		if len(tmdbIDs) > 0 {
-			h.DB.Where("tmdb_id IN ?", tmdbIDs).Find(&tmdbCaches)
-		}
-
-		// 构建 tmdb_id -> season_number -> episode_count 的映射
-		tmdbMap := make(map[int]map[int]int) // tmdb_id -> season_number -> episode_count
-		for _, tc := range tmdbCaches {
-			if _, exists := tmdbMap[tc.TmdbID]; !exists {
-				tmdbMap[tc.TmdbID] = make(map[int]int)
-			}
-			tmdbMap[tc.TmdbID][tc.SeasonNumber] = tc.EpisodeCount
-		}
-
 		// 构建返回结果
 		groupMap := make(map[string]*EpisodeMappingGroup)
-		for embyItemID, seasons := range seasonMap {
+		for embyItemID := range anomalyMap {
 			info, hasInfo := seriesInfoMap[embyItemID]
 			if !hasInfo {
-				continue // 没有异常记录，跳过（不应该发生）
+				continue
 			}
 
 			g := &EpisodeMappingGroup{
@@ -1133,49 +1110,16 @@ func (h *ScanHandler) GetEpisodeMappingAnomalies(c *gin.Context) {
 				Seasons:     []model.EpisodeMappingAnomaly{},
 			}
 
-			// 遍历所有本地季，构建完整的季信息
-			// 先收集所有季号并排序
-			seasonNumbers := make([]int, 0, len(seasons))
-			for seasonNum := range seasons {
-				if seasonNum > 0 { // 跳过特别篇
-					seasonNumbers = append(seasonNumbers, seasonNum)
-				}
+			// 只返回有异常的季（差异不为 0 或 TMDB 中不存在的季）
+			seasonNumbers := make([]int, 0, len(anomalyMap[embyItemID]))
+			for seasonNum := range anomalyMap[embyItemID] {
+				seasonNumbers = append(seasonNumbers, seasonNum)
 			}
-			// 排序季号
 			sort.Ints(seasonNumbers)
 
-			// 按排序后的季号构建季记录
 			for _, seasonNum := range seasonNumbers {
-				sc := seasons[seasonNum]
-
-				// 获取 TMDB 集数
-				tmdbEpisodes := 0
-				if tmdbSeasons, exists := tmdbMap[info.TmdbID]; exists {
-					if count, ok := tmdbSeasons[seasonNum]; ok {
-						tmdbEpisodes = count
-					}
-				}
-
-				// 计算差异
-				diff := sc.EpisodeCount - tmdbEpisodes
-				if diff < 0 {
-					diff = -diff
-				}
-
-				// 构建季记录
-				seasonRecord := model.EpisodeMappingAnomaly{
-					EmbyItemID:       embyItemID,
-					Name:             info.Name,
-					TmdbID:           info.TmdbID,
-					SeasonNumber:     seasonNum,
-					LocalEpisodes:    sc.EpisodeCount,
-					TmdbEpisodes:     tmdbEpisodes,
-					Difference:       diff,
-					LocalSeasonCount: info.LocalSeasonCount,
-					TmdbSeasonCount:  info.TmdbSeasonCount,
-				}
-
-				g.Seasons = append(g.Seasons, seasonRecord)
+				a := anomalyMap[embyItemID][seasonNum]
+				g.Seasons = append(g.Seasons, a)
 			}
 
 			groupMap[embyItemID] = g

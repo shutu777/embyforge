@@ -170,12 +170,12 @@ onBeforeUnmount(closeSSE)
     <template v-else>
       <!-- 第一行：缓存统计卡片 -->
       <VRow class="mb-4">
-        <VCol cols="12" sm="4">
+        <VCol cols="6" sm="4">
           <VCard class="dash-card" style="height: 120px;">
-            <VCardText class="d-flex align-center justify-space-between h-100 pa-5">
+            <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
               <div>
                 <div class="text-body-2 text-medium-emphasis mb-1">媒体条目</div>
-                <div class="text-h4 font-weight-bold">
+                <div class="text-h4 font-weight-bold stat-number">
                   {{ hasCache ? cacheStatus.total_items.toLocaleString() : '0' }}
                 </div>
               </div>
@@ -185,12 +185,12 @@ onBeforeUnmount(closeSSE)
             </VCardText>
           </VCard>
         </VCol>
-        <VCol cols="12" sm="4">
+        <VCol cols="6" sm="4">
           <VCard class="dash-card" style="height: 120px;">
-            <VCardText class="d-flex align-center justify-space-between h-100 pa-5">
+            <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
               <div>
                 <div class="text-body-2 text-medium-emphasis mb-1">季缓存</div>
-                <div class="text-h4 font-weight-bold">
+                <div class="text-h4 font-weight-bold stat-number">
                   {{ hasCache ? cacheStatus.total_seasons.toLocaleString() : '0' }}
                 </div>
               </div>
@@ -202,7 +202,7 @@ onBeforeUnmount(closeSSE)
         </VCol>
         <VCol cols="12" sm="4">
           <VCard class="dash-card" style="height: 120px;">
-            <VCardText class="d-flex align-center justify-space-between h-100 pa-5">
+            <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
               <div>
                 <div class="text-body-2 text-medium-emphasis mb-1">最后同步</div>
                 <div class="text-h6 font-weight-bold">
@@ -231,6 +231,10 @@ onBeforeUnmount(closeSSE)
               </div>
             </div>
           </div>
+
+          <VAlert type="warning" variant="tonal" density="compact" class="mb-4">
+            同步前请已使用最新的目录树生成 strm 文件，否则缓存数据可能不准确
+          </VAlert>
 
           <VBtn
             color="primary"
@@ -348,5 +352,32 @@ onBeforeUnmount(closeSSE)
   border-radius: 12px;
   background: rgba(var(--v-theme-primary), 0.04);
   border: 1px solid rgba(var(--v-theme-primary), 0.12);
+}
+
+// 移动端响应式适配
+@media (max-width: 599.98px) {
+  .stat-card-text {
+    padding: 12px !important;
+  }
+
+  .stat-number {
+    font-size: 1.25rem !important;
+  }
+
+  .stat-icon {
+    width: 40px;
+    height: 40px;
+  }
+
+  .sync-progress {
+    padding: 12px;
+  }
+}
+
+// 平板适配
+@media (min-width: 600px) and (max-width: 959.98px) {
+  .stat-number {
+    font-size: 1.5rem !important;
+  }
 }
 </style>

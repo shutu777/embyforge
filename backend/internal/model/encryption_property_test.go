@@ -11,7 +11,7 @@ import (
 // Validates: Requirements 5.5, 8.2
 // 对于任何 WebhookConfig，AuthToken 和 Secret 在数据库中应该是加密的，读取后应该自动解密
 func TestProperty_WebhookConfigEncryption(t *testing.T) {
-	db := setupWebhookConfigTestDB(t)
+	db := setupTestDB(t)
 
 	rapid.Check(t, func(t *rapid.T) {
 		// 生成随机的敏感信息
@@ -70,7 +70,7 @@ func TestProperty_WebhookConfigEncryption(t *testing.T) {
 // Validates: Requirements 5.5, 8.2
 // 对于 SystemConfig 中的 symedia_auth_token，在数据库中应该是加密的，读取后应该自动解密
 func TestProperty_SystemConfigEncryption(t *testing.T) {
-	db := setupWebhookConfigTestDB(t)
+	db := setupTestDB(t)
 
 	rapid.Check(t, func(t *rapid.T) {
 		// 生成随机的 auth token
@@ -118,7 +118,7 @@ func TestProperty_SystemConfigEncryption(t *testing.T) {
 // Validates: Requirements 5.5, 8.2
 // 对于 SystemConfig 中的非敏感配置（如 symedia_url），不应该加密
 func TestProperty_SystemConfigNoEncryptionForNonSensitive(t *testing.T) {
-	db := setupWebhookConfigTestDB(t)
+	db := setupTestDB(t)
 
 	rapid.Check(t, func(t *rapid.T) {
 		// 生成随机的 URL

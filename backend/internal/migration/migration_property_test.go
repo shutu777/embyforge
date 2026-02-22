@@ -55,8 +55,8 @@ func TestProperty_MigrationIdempotency(t *testing.T) {
 		if err != nil {
 			t.Fatalf("获取版本失败: %v", err)
 		}
-		if ver != 2 {
-			t.Fatalf("幂等性违反: 运行 %d 次后版本为 %d, 期望 2", runCount, ver)
+		if ver != 7 {
+			t.Fatalf("幂等性违反: 运行 %d 次后版本为 %d, 期望 7", runCount, ver)
 		}
 	})
 }

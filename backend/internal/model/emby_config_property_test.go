@@ -1,7 +1,6 @@
 package model
 
 import (
-	"path/filepath"
 	"testing"
 
 	"gorm.io/gorm"
@@ -12,19 +11,7 @@ import (
 // Validates: Requirements 3.2
 // 对于任意有效的 Emby 配置（Host、Port、APIKey），保存配置后再读取应返回等价的配置对象。
 func TestProperty_EmbyConfigRoundTrip(t *testing.T) {
-	// 创建测试数据库
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-	db, err := InitDB(dbPath)
-	if err != nil {
-		t.Fatalf("InitDB 失败: %v", err)
-	}
-	// 确保测试结束时关闭数据库连接
-	sqlDB, err := db.DB()
-	if err != nil {
-		t.Fatalf("获取底层 DB 失败: %v", err)
-	}
-	t.Cleanup(func() { sqlDB.Close() })
+	db := setupTestDB(t)
 
 	rapid.Check(t, func(t *rapid.T) {
 		// 生成随机的 Emby 配置
