@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useTheme } from 'vuetify'
 import api from '@/utils/api'
 import AsyncChart from '@/components/AsyncChart.vue'
@@ -12,6 +12,7 @@ const d = ref({
   emby_connected: false,
   emby_server_name: '',
   emby_version: '',
+  strm_assistant_version: '',
   emby_error: '',
   movie_count: 0,
   series_count: 0,
@@ -20,9 +21,12 @@ const d = ref({
   duplicate_group_count: 0,
   episode_anomaly_count: 0,
   recent_items: [],
+  recent_playback: [],
   daily_media_stats: [],
   daily_anomaly_stats: [],
 })
+
+let refreshTimer = null
 
 async function fetchDashboard() {
   loading.value = true
@@ -36,18 +40,23 @@ async function fetchDashboard() {
   }
 }
 
-onMounted(fetchDashboard)
+onMounted(() => {
+  fetchDashboard()
+  // 每60秒自动刷新
+  refreshTimer = setInterval(fetchDashboard, 60000)
+})
+
+onUnmounted(() => {
+  if (refreshTimer) {
+    clearInterval(refreshTimer)
+    refreshTimer = null
+  }
+})
 
 const statCards = [
   { key: 'movie_count', label: '电影', icon: 'ri-movie-2-fill', color: '#6366f1' },
   { key: 'series_count', label: '剧集', icon: 'ri-tv-2-fill', color: '#06b6d4' },
   { key: 'episode_count', label: '集数', icon: 'ri-play-circle-fill', color: '#f59e0b' },
-]
-
-const anomalyCards = [
-  { key: 'scrape_anomaly_count', label: '刮削异常', icon: 'ri-search-eye-fill', color: 'warning', to: '/scrape-anomaly' },
-  { key: 'duplicate_group_count', label: '重复媒体', icon: 'ri-file-copy-2-fill', color: 'info', to: '/duplicate-media' },
-  { key: 'episode_anomaly_count', label: '异常映射', icon: 'ri-git-branch-fill', color: 'error', to: '/episode-mapping' },
 ]
 
 // 汇总计算
@@ -161,17 +170,17 @@ const anomalyChartSeries = computed(() => [{
       <VRow class="mb-4">
         <!-- 最近入库 -->
         <VCol cols="12" md="4">
-          <VCard class="dash-card" style="height: 340px;">
+          <VCard class="dash-card dash-mid-card">
             <VCardTitle class="card-title">
               <VIcon icon="ri-time-fill" color="#6366f1" size="18" class="me-2" />
               最近入库
             </VCardTitle>
-            <VCardText class="pt-0 px-4 pb-3 overflow-y-auto" style="max-height: 280px;">
+            <VCardText class="pt-0 px-4 pb-3">
               <template v-if="d.recent_items && d.recent_items.length">
                 <div
                   v-for="(item, i) in d.recent_items"
                   :key="item.id"
-                  class="d-flex align-center py-2"
+                  class="d-flex align-center py-3"
                   :class="{ 'item-border': i < d.recent_items.length - 1 }"
                 >
                   <span class="text-body-2 text-medium-emphasis me-3" style="min-width: 16px; text-align: center;">{{ i + 1 }}</span>
@@ -192,16 +201,16 @@ const anomalyChartSeries = computed(() => [{
 
         <!-- 系统状态 -->
         <VCol cols="12" md="4">
-          <VCard class="dash-card" style="height: 340px;">
+          <VCard class="dash-card dash-mid-card">
             <VCardTitle class="card-title">
               <VIcon icon="ri-server-fill" color="#06b6d4" size="18" class="me-2" />
               系统状态
             </VCardTitle>
-            <VCardText class="d-flex flex-column justify-center px-5 pb-4 pt-0" style="height: 270px;">
+            <VCardText class="d-flex flex-column flex-grow-1 px-5 pb-4 pt-0">
               <!-- Emby 连接状态 -->
-              <div class="status-row d-flex align-center py-3">
-                <VAvatar color="primary" variant="tonal" size="38" rounded="lg" class="me-3">
-                  <VIcon icon="ri-link" size="20" />
+              <div class="status-row d-flex align-center py-2">
+                <VAvatar color="primary" variant="tonal" size="36" rounded="lg" class="me-3">
+                  <VIcon icon="ri-link" size="18" />
                 </VAvatar>
                 <div class="flex-grow-1">
                   <div class="text-caption text-medium-emphasis">连接状态</div>
@@ -211,9 +220,9 @@ const anomalyChartSeries = computed(() => [{
                 </div>
               </div>
               <!-- 服务器名称 -->
-              <div class="status-row d-flex align-center py-3">
-                <VAvatar color="info" variant="tonal" size="38" rounded="lg" class="me-3">
-                  <VIcon icon="ri-computer-fill" size="20" />
+              <div class="status-row d-flex align-center py-2">
+                <VAvatar color="info" variant="tonal" size="36" rounded="lg" class="me-3">
+                  <VIcon icon="ri-computer-fill" size="18" />
                 </VAvatar>
                 <div class="flex-grow-1">
                   <div class="text-caption text-medium-emphasis">服务器名称</div>
@@ -221,19 +230,29 @@ const anomalyChartSeries = computed(() => [{
                 </div>
               </div>
               <!-- 版本号 -->
-              <div class="status-row d-flex align-center py-3">
-                <VAvatar color="warning" variant="tonal" size="38" rounded="lg" class="me-3">
-                  <VIcon icon="ri-information-fill" size="20" />
+              <div class="status-row d-flex align-center py-2">
+                <VAvatar color="warning" variant="tonal" size="36" rounded="lg" class="me-3">
+                  <VIcon icon="ri-information-fill" size="18" />
                 </VAvatar>
                 <div class="flex-grow-1">
                   <div class="text-caption text-medium-emphasis">Emby 版本</div>
                   <div class="text-body-2 font-weight-medium">{{ d.emby_version || '-' }}</div>
                 </div>
               </div>
+              <!-- Strm Assistant 版本 -->
+              <div class="status-row d-flex align-center py-2">
+                <VAvatar color="secondary" variant="tonal" size="36" rounded="lg" class="me-3">
+                  <VIcon icon="ri-stethoscope-fill" size="18" />
+                </VAvatar>
+                <div class="flex-grow-1">
+                  <div class="text-caption text-medium-emphasis">Strm Assistant 版本</div>
+                  <div class="text-body-2 font-weight-medium">{{ d.strm_assistant_version || '-' }}</div>
+                </div>
+              </div>
               <!-- 媒体总数 -->
-              <div class="d-flex align-center py-3">
-                <VAvatar color="success" variant="tonal" size="38" rounded="lg" class="me-3">
-                  <VIcon icon="ri-database-2-fill" size="20" />
+              <div class="d-flex align-center py-2">
+                <VAvatar color="success" variant="tonal" size="36" rounded="lg" class="me-3">
+                  <VIcon icon="ri-database-2-fill" size="18" />
                 </VAvatar>
                 <div class="flex-grow-1">
                   <div class="text-caption text-medium-emphasis">媒体总数</div>
@@ -244,26 +263,36 @@ const anomalyChartSeries = computed(() => [{
           </VCard>
         </VCol>
 
-        <!-- 异常概览 -->
+        <!-- 最近播放 -->
         <VCol cols="12" md="4">
-          <VCard class="dash-card" style="height: 340px;">
+          <VCard class="dash-card dash-mid-card">
             <VCardTitle class="card-title">
-              <VIcon icon="ri-alert-fill" color="#f59e0b" size="18" class="me-2" />
-              异常概览
+              <VIcon icon="ri-play-fill" color="#10b981" size="18" class="me-2" />
+              最近播放
             </VCardTitle>
-            <VCardText class="d-flex flex-column justify-center px-4 pb-4 pt-0" style="height: 270px;">
-              <RouterLink
-                v-for="item in anomalyCards"
-                :key="item.key"
-                :to="item.to"
-                class="anomaly-row d-flex align-center py-3 text-decoration-none"
-              >
-                <VAvatar :color="item.color" variant="tonal" size="38" rounded="lg" class="me-3">
-                  <VIcon :icon="item.icon" size="20" />
-                </VAvatar>
-                <span class="text-body-2 flex-grow-1" style="color: inherit;">{{ item.label }}</span>
-                <span class="text-h6 font-weight-bold">{{ d[item.key] || 0 }}</span>
-              </RouterLink>
+            <VCardText class="pt-0 px-4 pb-3">
+              <template v-if="d.recent_playback && d.recent_playback.length">
+                <div
+                  v-for="(item, i) in d.recent_playback"
+                  :key="i"
+                  class="d-flex align-center py-2"
+                  :class="{ 'item-border': i < d.recent_playback.length - 1 }"
+                >
+                  <VAvatar size="36" rounded="lg" class="me-3" style="flex-shrink: 0;">
+                    <VImg v-if="item.image_url" :src="item.image_url" cover />
+                    <VIcon v-else icon="ri-play-circle-fill" size="18" />
+                  </VAvatar>
+                  <div class="flex-grow-1" style="min-width: 0;">
+                    <div class="text-body-2 text-truncate">{{ item.user }} 在 {{ item.device }} 上播放了 {{ item.media }}</div>
+                    <div class="text-caption text-medium-emphasis">{{ item.time }}</div>
+                  </div>
+                </div>
+              </template>
+              <div v-else class="text-center text-medium-emphasis py-8">
+                <VIcon icon="ri-play-circle-line" size="32" class="mb-2 d-block mx-auto" />
+                <div class="text-body-2 mb-1">暂无播放记录</div>
+                <div class="text-caption">请在 Emby 中安装 Playback Reporting 插件以启用播放记录</div>
+              </div>
             </VCardText>
           </VCard>
         </VCol>
@@ -278,7 +307,7 @@ const anomalyChartSeries = computed(() => [{
                 type="area"
                 :options="mediaChartOptions"
                 :series="mediaChartSeries"
-                :height="320"
+                :height="280"
               />
             </VCardText>
           </VCard>
@@ -290,7 +319,7 @@ const anomalyChartSeries = computed(() => [{
                 type="area"
                 :options="anomalyChartOptions"
                 :series="anomalyChartSeries"
-                :height="320"
+                :height="280"
               />
             </VCardText>
           </VCard>
@@ -313,6 +342,10 @@ const anomalyChartSeries = computed(() => [{
 
 .dash-stat-card {
   height: 120px;
+}
+
+.dash-mid-card {
+  height: 100%;
 }
 
 .stat-text-wrap {
@@ -348,21 +381,6 @@ const anomalyChartSeries = computed(() => [{
   border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
 }
 
-.anomaly-row {
-  color: rgb(var(--v-theme-on-surface));
-  border-radius: 8px;
-  padding-inline: 4px;
-  transition: background 0.15s ease;
-
-  &:hover {
-    background: rgba(var(--v-theme-primary), 0.06);
-  }
-
-  &:not(:last-child) {
-    border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  }
-}
-
 .h-100 {
   height: 100%;
 }
@@ -381,6 +399,10 @@ const anomalyChartSeries = computed(() => [{
   .dash-stat-card {
     height: auto;
     min-height: 90px;
+  }
+
+  .dash-mid-card {
+    height: auto;
   }
 
   .stat-card-text {

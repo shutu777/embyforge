@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"embyforge/internal/emby"
@@ -33,12 +34,22 @@ type RecentMedia struct {
 	ImageURL string `json:"image_url"`
 }
 
+// PlaybackRecord 播放记录
+type PlaybackRecord struct {
+	User     string `json:"user"`
+	Device   string `json:"device"`
+	Media    string `json:"media"`
+	Time     string `json:"time"`
+	ImageURL string `json:"image_url"`
+}
+
 // DashboardData 仪表盘数据
 type DashboardData struct {
-	EmbyConnected  bool   `json:"emby_connected"`
-	EmbyServerName string `json:"emby_server_name"`
-	EmbyVersion    string `json:"emby_version"`
-	EmbyError      string `json:"emby_error,omitempty"`
+	EmbyConnected        bool   `json:"emby_connected"`
+	EmbyServerName       string `json:"emby_server_name"`
+	EmbyVersion          string `json:"emby_version"`
+	StrmAssistantVersion string `json:"strm_assistant_version"`
+	EmbyError            string `json:"emby_error,omitempty"`
 
 	MovieCount   int `json:"movie_count"`
 	SeriesCount  int `json:"series_count"`
@@ -48,7 +59,8 @@ type DashboardData struct {
 	DuplicateGroupCount int64 `json:"duplicate_group_count"`
 	EpisodeAnomalyCount int64 `json:"episode_anomaly_count"`
 
-	RecentItems []RecentMedia `json:"recent_items"`
+	RecentItems    []RecentMedia    `json:"recent_items"`
+	RecentPlayback []PlaybackRecord `json:"recent_playback"`
 
 	// 图表数据（最近7天）
 	DailyMediaStats   []DailyStat `json:"daily_media_stats"`
@@ -107,6 +119,9 @@ func (h *DashboardHandler) GetDashboard(c *gin.Context) {
 	data.EmbyServerName = info.ServerName
 	data.EmbyVersion = info.Version
 
+	// 获取神医（Strm Assistant）插件版本
+	data.StrmAssistantVersion = h.fetchStrmAssistantVersion(baseURL, config.APIKey)
+
 	// 媒体数量统计
 	data.MovieCount = h.fetchCount(baseURL, config.APIKey, "Movie")
 	data.SeriesCount = h.fetchCount(baseURL, config.APIKey, "Series")
@@ -114,6 +129,9 @@ func (h *DashboardHandler) GetDashboard(c *gin.Context) {
 
 	// 最近入库
 	data.RecentItems = h.fetchRecentItems(baseURL, config.APIKey)
+
+	// 最近播放记录
+	data.RecentPlayback = h.fetchRecentPlayback(baseURL, config.APIKey)
 
 	// 图表数据：最近7天每日入库统计
 	data.DailyMediaStats = h.fetchDailyMediaStats(baseURL, config.APIKey)
@@ -137,6 +155,33 @@ func (h *DashboardHandler) fetchCount(baseURL, apiKey, itemType string) int {
 		return 0
 	}
 	return resp.TotalRecordCount
+}
+
+// embyPlugin Emby 插件信息
+type embyPlugin struct {
+	Name    string `json:"Name"`
+	Version string `json:"Version"`
+}
+
+// fetchStrmAssistantVersion 获取神医（Strm Assistant）插件版本
+func (h *DashboardHandler) fetchStrmAssistantVersion(baseURL, apiKey string) string {
+	url := fmt.Sprintf("%s/emby/Plugins", baseURL)
+	body, err := embyGet(url, apiKey)
+	if err != nil {
+		log.Printf("获取插件列表失败: %v", err)
+		return ""
+	}
+	var plugins []embyPlugin
+	if err := json.Unmarshal(body, &plugins); err != nil {
+		log.Printf("解析插件列表失败: %v", err)
+		return ""
+	}
+	for _, p := range plugins {
+		if p.Name == "Strm Assistant" {
+			return p.Version
+		}
+	}
+	return ""
 }
 
 // fetchRecentItems 获取最近入库的媒体
@@ -192,6 +237,101 @@ func embyGet(url, apiKey string) ([]byte, error) {
 		return nil, fmt.Errorf("Emby API 返回 %d", resp.StatusCode)
 	}
 	return io.ReadAll(resp.Body)
+}
+
+// activityLogResp Emby 活动日志响应
+type activityLogResp struct {
+	Items []activityLogEntry `json:"Items"`
+}
+
+type activityLogEntry struct {
+	Name     string `json:"Name"`
+	Type     string `json:"Type"`
+	ItemId   string `json:"ItemId"`
+	Date     string `json:"Date"`
+	UserId   string `json:"UserId"`
+	Severity string `json:"Severity"`
+}
+
+// fetchRecentPlayback 获取最近5条开始播放记录（从 Emby 活动日志）
+// Name 格式: "shutu 在 Apple TV 上开始播放 完美世界 - S1, Ep53 - 双石大战.下"
+// 解析出用户名、设备名、媒体名
+func (h *DashboardHandler) fetchRecentPlayback(baseURL, apiKey string) []PlaybackRecord {
+	url := fmt.Sprintf("%s/emby/System/ActivityLog/Entries?StartIndex=0&Limit=50", baseURL)
+	body, err := embyGet(url, apiKey)
+	if err != nil {
+		log.Printf("获取播放记录失败: %v", err)
+		return nil
+	}
+	var resp activityLogResp
+	if err := json.Unmarshal(body, &resp); err != nil {
+		log.Printf("解析播放记录失败: %v", err)
+		return nil
+	}
+
+	records := make([]PlaybackRecord, 0, 5)
+	for _, entry := range resp.Items {
+		// 只取开始播放事件
+		if entry.Type != "playback.start" {
+			continue
+		}
+
+		// 解析 Name: "shutu 在 Apple TV 上开始播放 完美世界 - S1, Ep53 - 双石大战.下"
+		user, device, media := parsePlaybackName(entry.Name)
+
+		// 解析时间
+		timeStr := entry.Date
+		if t, err := time.Parse("2006-01-02T15:04:05.0000000Z", entry.Date); err == nil {
+			timeStr = t.Local().Format("01/02 15:04")
+		} else if t, err := time.Parse("2006-01-02T15:04:05Z", entry.Date); err == nil {
+			timeStr = t.Local().Format("01/02 15:04")
+		}
+
+		// 通过 ItemId 获取封面
+		imgURL := ""
+		if entry.ItemId != "" {
+			imgURL = fmt.Sprintf("%s/emby/Items/%s/Images/Primary?maxHeight=160&api_key=%s", baseURL, entry.ItemId, apiKey)
+		}
+
+		records = append(records, PlaybackRecord{
+			User:     user,
+			Device:   device,
+			Media:    media,
+			Time:     timeStr,
+			ImageURL: imgURL,
+		})
+
+		if len(records) >= 5 {
+			break
+		}
+	}
+	return records
+}
+
+// parsePlaybackName 解析播放事件名称
+// 输入: "shutu 在 Apple TV 上开始播放 完美世界 - S1, Ep53 - 双石大战.下"
+// 输出: user="shutu", device="Apple TV", media="完美世界 - S1, Ep53 - 双石大战.下"
+func parsePlaybackName(name string) (user, device, media string) {
+	// 尝试匹配 "xxx 在 yyy 上开始播放 zzz"
+	const startMarker = " 在 "
+	const playMarker = " 上开始播放 "
+
+	startIdx := strings.Index(name, startMarker)
+	if startIdx == -1 {
+		return "", "", name
+	}
+
+	user = name[:startIdx]
+	rest := name[startIdx+len(startMarker):]
+
+	playIdx := strings.Index(rest, playMarker)
+	if playIdx == -1 {
+		return user, "", rest
+	}
+
+	device = rest[:playIdx]
+	media = rest[playIdx+len(playMarker):]
+	return user, device, media
 }
 
 // fetchDailyMediaStats 获取最近7天每日入库数量（通过 Emby API）
