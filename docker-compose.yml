@@ -11,3 +11,7 @@ services:
       - ./data:/data
     environment:
       - TZ=Asia/Shanghai
+      # Go 运行时内存优化：GOMEMLIMIT 让 GC 在接近限制时更积极回收
+      # GOGC=50 让 GC 触发更频繁（默认100），用少量 CPU 换更低内存
+      - GOMEMLIMIT=256MiB
+      - GOGC=50

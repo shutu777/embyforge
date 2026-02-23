@@ -41,12 +41,8 @@ COPY supervisord.conf /etc/supervisord.conf
 COPY --from=frontend-builder /app/frontend/dist /usr/share/nginx/html
 COPY --from=backend-builder /app/embyforge /usr/local/bin/embyforge
 
-# Go 运行时内存限制：容器内存有限时，让 GC 更积极地回收
-# GOMEMLIMIT 设为 256MB，GOGC 设为 50（默认100），更频繁 GC 换取更低内存占用
 ENV EMBYFORGE_PORT=8080 \
-    EMBYFORGE_DB_PATH=/data/embyforge.db \
-    GOMEMLIMIT=256MiB \
-    GOGC=50
+    EMBYFORGE_DB_PATH=/data/embyforge.db
 
 EXPOSE 80
 VOLUME ["/data"]
