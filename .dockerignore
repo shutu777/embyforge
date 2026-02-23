@@ -1,6 +1,20 @@
+# 依赖和构建产物（Docker 内重新安装/构建）
 frontend/node_modules
 frontend/dist
 backend/data
+backend/server.exe
+
+# 开发工具和配置
 .kiro
 .git
+.vscode
+.DS_Store
+
+# 文档
 *.md
+LICENSE
+
+# Docker 自身（避免递归）
+Dockerfile
+docker-compose.yml
+build.sh

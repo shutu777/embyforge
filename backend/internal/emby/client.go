@@ -499,7 +499,17 @@ func (c *Client) GetAllItemIDs(ctx context.Context, itemType string) (map[string
 
 // GetAllItemIDsWithProgress 获取 Emby 中所有媒体条目的 ID 列表，支持进度回调
 // onProgress(fetched, total) 在每页拉取后调用
+// 使用轻量响应结构体，只解析 ID 字段，减少内存分配
 func (c *Client) GetAllItemIDsWithProgress(ctx context.Context, itemType string, onProgress func(fetched, total int)) (map[string]bool, int, error) {
+	// 轻量响应结构体，只解析 ID，避免解析 Name/Path/ProviderIds 等大字段
+	type idOnlyItem struct {
+		ID string `json:"Id"`
+	}
+	type idOnlyResponse struct {
+		Items            []idOnlyItem `json:"Items"`
+		TotalRecordCount int          `json:"TotalRecordCount"`
+	}
+
 	ids := make(map[string]bool, 300000)
 	startIndex := 0
 	totalCount := 0
@@ -524,7 +534,7 @@ func (c *Client) GetAllItemIDsWithProgress(ctx context.Context, itemType string,
 			return nil, 0, fmt.Errorf("获取 Emby ID 列表失败 (StartIndex=%d): %w", startIndex, err)
 		}
 
-		var resp MediaItemsResponse
+		var resp idOnlyResponse
 		if err := json.Unmarshal(body, &resp); err != nil {
 			return nil, 0, fmt.Errorf("解析 Emby ID 列表响应失败: %w", err)
 		}

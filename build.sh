@@ -22,9 +22,11 @@ else
     docker buildx use "${BUILDER_NAME}"
 fi
 
+# 通用构建参数：启用内联缓存，加速后续构建
+BUILD_ARGS="--build-arg BUILDKIT_INLINE_CACHE=1"
+
 case "${2}" in
     --push)
-        # 检查是否已登录 Docker Hub
         if ! docker info 2>/dev/null | grep -q "Username"; then
             echo ">>> 未检测到 Docker Hub 登录，请先登录..."
             docker login
@@ -33,6 +35,9 @@ case "${2}" in
         echo ">>> 构建并推送多架构镜像..."
         docker buildx build \
             --platform "${PLATFORMS}" \
+            ${BUILD_ARGS} \
+            --cache-from "type=registry,ref=${DOCKER_REPO}:buildcache" \
+            --cache-to "type=registry,ref=${DOCKER_REPO}:buildcache,mode=max" \
             -t "${DOCKER_REPO}:${IMAGE_TAG}" \
             -t "${DOCKER_REPO}:latest" \
             --push \
@@ -46,6 +51,7 @@ case "${2}" in
     --load)
         echo ">>> 构建并加载到本地（仅当前架构）..."
         docker buildx build \
+            ${BUILD_ARGS} \
             -t "${DOCKER_REPO}:${IMAGE_TAG}" \
             --load \
             .
@@ -58,6 +64,7 @@ case "${2}" in
         echo ">>> 构建多架构镜像（不推送）..."
         docker buildx build \
             --platform "${PLATFORMS}" \
+            ${BUILD_ARGS} \
             -t "${DOCKER_REPO}:${IMAGE_TAG}" \
             .
 

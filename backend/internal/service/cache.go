@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -403,6 +404,9 @@ func (s *CacheService) SyncMediaCacheWithProgress(ctx context.Context, client *e
 
 	log.Printf("📊 媒体缓存写入完成: 共 %d 个条目 (去重前 API 返回 %d 个)", result.TotalItems, len(seen))
 
+	// 释放去重集合，减少内存占用
+	seen = nil
+
 	// 重建索引
 	s.rebuildMediaCacheIndexes()
 
@@ -417,6 +421,9 @@ func (s *CacheService) SyncMediaCacheWithProgress(ctx context.Context, client *e
 	result.ElapsedMs = time.Since(start).Milliseconds()
 	log.Printf("✅ 媒体缓存同步完成: %d 个媒体条目, %d 个季, 耗时 %dms",
 		result.TotalItems, result.TotalSeasons, result.ElapsedMs)
+
+	// 全量同步分配了大量内存（去重 map + 缓冲区），主动释放归还给操作系统
+	debug.FreeOSMemory()
 
 	select {
 	case progressCh <- SyncProgress{Phase: "done", Done: true, Processed: result.TotalItems, Total: total, Result: result}:
@@ -1046,6 +1053,9 @@ func (s *CacheService) IncrementalSyncMediaCacheWithProgress(ctx context.Context
 		result.TotalItems, result.NewItems, result.UpdatedItems, result.DeletedItems,
 		result.TotalSeasons, result.ElapsedMs, upsertMs, deleteMs, seasonMs)
 
+	// 增量同步的删除检测可能分配大量内存，主动释放归还给操作系统
+	debug.FreeOSMemory()
+
 	select {
 	case progressCh <- SyncProgress{Phase: "done", Done: true, Processed: result.TotalItems, Total: result.TotalItems, Result: result}:
 	case <-ctx.Done():
@@ -1209,7 +1219,12 @@ func (s *CacheService) smartDeleteDetection(
 		}
 	}
 
-	if len(toDelete) > 0 {
+	// 释放大对象，减少内存峰值保留
+	embyIDs = nil
+	localIDs = nil
+
+	deletedCount := len(toDelete)
+	if deletedCount > 0 {
 		const deleteBatch = 500
 		for i := 0; i < len(toDelete); i += deleteBatch {
 			end := i + deleteBatch
@@ -1218,12 +1233,16 @@ func (s *CacheService) smartDeleteDetection(
 			}
 			s.DB.Where("emby_item_id IN ?", toDelete[i:end]).Delete(&model.MediaCache{})
 		}
-		log.Printf("🗑️ 删除检测完成: 删除了 %d 个本地多余条目", len(toDelete))
+		log.Printf("🗑️ 删除检测完成: 删除了 %d 个本地多余条目", deletedCount)
 	} else {
 		log.Printf("✅ 删除检测完成: 无需删除")
 	}
+	toDelete = nil
 
-	return len(toDelete), nil
+	// 全量 ID 对比会分配大量内存（~50MB+），主动释放归还给操作系统
+	debug.FreeOSMemory()
+
+	return deletedCount, nil
 }
 
 // detectAndRemoveDeletedItems 已废弃，实时同步改用 smartDeleteDetection
