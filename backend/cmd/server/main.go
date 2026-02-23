@@ -1,19 +1,23 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"embyforge/internal/config"
+	"embyforge/internal/emby"
 	"embyforge/internal/handler"
 	"embyforge/internal/middleware"
 	"embyforge/internal/model"
+	"embyforge/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -150,10 +154,67 @@ func main() {
 	authHandler := handler.NewAuthHandler(db, cfg.JWTSecret)
 	embyConfigHandler := handler.NewEmbyConfigHandler(db)
 	scanHandler := handler.NewScanHandler(db)
-	cacheHandler := handler.NewCacheHandler(db, cfg.JWTSecret)
+
+	// 创建共享的同步锁和缓存服务
+	syncLock := &service.SyncLock{}
+	cacheService := service.NewCacheService(db)
+
+	// 创建 getEmbyClient 辅助函数
+	getEmbyClient := func() (*emby.Client, error) {
+		var embyConfig model.EmbyConfig
+		if err := db.First(&embyConfig).Error; err != nil {
+			return nil, err
+		}
+		return emby.NewClient(embyConfig.Host, embyConfig.Port, embyConfig.APIKey), nil
+	}
+
+	// 创建 EventBuffer（flush 时执行 Delta Update）
+	var eventBuffer *service.EventBuffer
+	eventBuffer = service.NewEventBuffer(syncLock, func(ctx context.Context, events []*service.BufferedEvent) {
+		client, err := getEmbyClient()
+		if err != nil {
+			log.Printf("⚠️ 增量同步: 获取 Emby 客户端失败: %v", err)
+			return
+		}
+		if err := cacheService.ProcessDeltaEvents(ctx, client, syncLock, events); err != nil {
+			log.Printf("⚠️ 增量同步失败: %v", err)
+		}
+	})
+
+	cacheHandler := handler.NewCacheHandler(db, cfg.JWTSecret, syncLock, eventBuffer)
+	embyWebhookHandler := handler.NewEmbyWebhookHandler(eventBuffer)
+
+	// 从数据库读取 cron 同步间隔配置
+	cronIntervalHours := 1
+	var cronConfig model.SystemConfig
+	if err := db.Where("`key` = ?", "cron_sync_interval_hours").First(&cronConfig).Error; err != nil {
+		// 不存在则创建默认配置
+		db.Create(&model.SystemConfig{
+			Key:         "cron_sync_interval_hours",
+			Value:       "1",
+			Description: "定时全量同步间隔（小时，范围 1-168）",
+		})
+	} else {
+		if v, err := strconv.Atoi(cronConfig.Value); err == nil {
+			cronIntervalHours = v
+		}
+	}
+
+	// 创建并启动 CronScheduler
+	cronScheduler := service.NewCronScheduler(cronIntervalHours, syncLock, cacheService, eventBuffer, getEmbyClient)
+	cronScheduler.Start()
+
 	dashboardHandler := handler.NewDashboardHandler(db)
 	profileHandler := handler.NewProfileHandler(db, filepath.Dir(cfg.DBPath))
 	systemConfigHandler := handler.NewSystemConfigHandler(db)
+	// 配置更新回调：cron 间隔变更时热更新调度器
+	systemConfigHandler.OnConfigUpdate = func(key, value string) {
+		if key == "cron_sync_interval_hours" {
+			if v, err := strconv.Atoi(value); err == nil {
+				cronScheduler.UpdateInterval(v)
+			}
+		}
+	}
 	logsHandler := handler.NewLogsHandler(logBuffer)
 	tmdbCacheHandler := handler.NewTmdbCacheHandler(db)
 	symediaHandler := handler.NewSymediaHandler(db, cfg.JWTSecret)
@@ -171,21 +232,25 @@ func main() {
 	uploadsDir := filepath.Join(filepath.Dir(cfg.DBPath), "uploads")
 	os.MkdirAll(uploadsDir, 0755)
 
-	// 创建Webhook速率限制器：每分钟最多10个请求
+	// 创建速率限制器
 	webhookRateLimiter := middleware.NewRateLimiter(10, time.Minute)
+	embyWebhookRateLimiter := middleware.NewRateLimiter(60, time.Minute)
 
 	// 公开路由（无需认证）
 	public := r.Group("/api")
 	{
 		public.POST("/auth/login", authHandler.Login)
 		// GitHub Webhook 公开端点（带速率限制）
-		// 支持动态路径参数，但实际不使用（为了兼容生成的 URL）
 		public.POST("/webhook/github", 
 			middleware.RateLimitMiddleware(webhookRateLimiter),
 			webhookHandler.HandleGitHubWebhook)
 		public.POST("/webhook/github/:id", 
 			middleware.RateLimitMiddleware(webhookRateLimiter),
 			webhookHandler.HandleGitHubWebhook)
+		// Emby Webhook 公开端点（带速率限制，每分钟最多 60 个请求）
+		public.POST("/webhook/emby",
+			middleware.RateLimitMiddleware(embyWebhookRateLimiter),
+			embyWebhookHandler.HandleEmbyWebhook)
 	}
 
 	// 受保护路由（需要 JWT 认证）
@@ -194,9 +259,6 @@ func main() {
 
 	// SSE 路由（handler 内部通过 query parameter 验证 JWT，不使用中间件）
 	r.GET("/api/cache/sync/stream", cacheHandler.SyncCacheStream)
-
-	// 启动 Emby WebSocket 实时监听（后台自动重连）
-	cacheHandler.StartWSListener()
 
 	{
 		protected.GET("/dashboard", dashboardHandler.GetDashboard)
@@ -305,9 +367,20 @@ func ginLogger(accessLog *accessLogger, logBuffer *handler.LogBuffer) gin.Handle
 			accessLog.write(msg)
 		}
 
-		// 写入内存缓冲区（过滤掉日志接口自身的请求，避免刷屏）
-		if c.Request.URL.Path != "/api/logs/recent" {
+		// 写入内存缓冲区（过滤掉高频 GET 请求，避免刷屏）
+		// 只过滤成功的 GET 请求，非 200 的仍然显示
+		if !shouldHideFromRealtimeLog(c.Request.Method, c.Request.URL.Path, status) {
 			logBuffer.Add(level, msg)
 		}
 	}
+}
+
+// shouldHideFromRealtimeLog 判断请求是否应从实时日志面板中隐藏
+// 隐藏所有成功的 GET 请求（这些都是前端页面加载和状态查询，信息价值低）
+// POST/PUT/DELETE 和所有错误请求始终显示
+func shouldHideFromRealtimeLog(method, path string, status int) bool {
+	if method == "GET" && status < 400 {
+		return true
+	}
+	return false
 }

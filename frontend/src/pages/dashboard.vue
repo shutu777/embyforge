@@ -137,13 +137,13 @@ const anomalyChartSeries = computed(() => [{
 
     <template v-else>
       <!-- 第一行：统计卡片 -->
-      <VRow class="mb-4">
+      <VRow class="mb-4 match-height">
         <VCol v-for="stat in statCards" :key="stat.key" cols="6" sm="6" md="3">
-          <VCard class="dash-card dash-stat-card">
+          <VCard class="stat-card">
             <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
               <div class="stat-text-wrap">
                 <div class="text-body-2 text-medium-emphasis mb-1">{{ stat.label }}</div>
-                <div class="text-h4 font-weight-bold stat-number">{{ (d[stat.key] || 0).toLocaleString() }}</div>
+                <div class="font-weight-bold stat-number">{{ (d[stat.key] || 0).toLocaleString() }}</div>
               </div>
               <div class="stat-icon" :style="{ background: stat.color + '18' }">
                 <VIcon :icon="stat.icon" :color="stat.color" size="24" />
@@ -152,11 +152,11 @@ const anomalyChartSeries = computed(() => [{
           </VCard>
         </VCol>
         <VCol cols="6" sm="6" md="3">
-          <VCard class="dash-card dash-stat-card">
+          <VCard class="stat-card">
             <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
               <div class="stat-text-wrap">
                 <div class="text-body-2 text-medium-emphasis mb-1">总异常数</div>
-                <div class="text-h4 font-weight-bold stat-number">{{ totalAnomalyCount.toLocaleString() }}</div>
+                <div class="font-weight-bold stat-number">{{ totalAnomalyCount.toLocaleString() }}</div>
               </div>
               <div class="stat-icon" :style="{ background: '#ef444418' }">
                 <VIcon icon="ri-alert-fill" color="#ef4444" size="24" />
@@ -170,7 +170,7 @@ const anomalyChartSeries = computed(() => [{
       <VRow class="mb-4">
         <!-- 最近入库 -->
         <VCol cols="12" md="4">
-          <VCard class="dash-card dash-mid-card">
+          <VCard class="mid-card">
             <VCardTitle class="card-title">
               <VIcon icon="ri-time-fill" color="#6366f1" size="18" class="me-2" />
               最近入库
@@ -201,7 +201,7 @@ const anomalyChartSeries = computed(() => [{
 
         <!-- 系统状态 -->
         <VCol cols="12" md="4">
-          <VCard class="dash-card dash-mid-card">
+          <VCard class="mid-card">
             <VCardTitle class="card-title">
               <VIcon icon="ri-server-fill" color="#06b6d4" size="18" class="me-2" />
               系统状态
@@ -265,7 +265,7 @@ const anomalyChartSeries = computed(() => [{
 
         <!-- 最近播放 -->
         <VCol cols="12" md="4">
-          <VCard class="dash-card dash-mid-card">
+          <VCard class="mid-card">
             <VCardTitle class="card-title">
               <VIcon icon="ri-play-fill" color="#10b981" size="18" class="me-2" />
               最近播放
@@ -301,7 +301,7 @@ const anomalyChartSeries = computed(() => [{
       <!-- 第三行：图表 -->
       <VRow>
         <VCol cols="12" md="6">
-          <VCard class="dash-card">
+          <VCard class="mid-card">
             <VCardText class="pa-4">
               <AsyncChart
                 type="area"
@@ -313,7 +313,7 @@ const anomalyChartSeries = computed(() => [{
           </VCard>
         </VCol>
         <VCol cols="12" md="6">
-          <VCard class="dash-card">
+          <VCard class="mid-card">
             <VCardText class="pa-4">
               <AsyncChart
                 type="area"
@@ -329,108 +329,3 @@ const anomalyChartSeries = computed(() => [{
   </div>
 </template>
 
-<style lang="scss" scoped>
-.dash-card {
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-
-  &:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-  }
-}
-
-.dash-stat-card {
-  height: 120px;
-}
-
-.dash-mid-card {
-  height: 100%;
-}
-
-.stat-text-wrap {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-}
-
-.card-title {
-  font-size: 0.875rem !important;
-  font-weight: 600;
-  padding: 16px 16px 8px;
-  display: flex;
-  align-items: center;
-}
-
-.stat-icon {
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  margin-inline-start: 8px;
-}
-
-.item-border {
-  border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-}
-
-.status-row {
-  border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-}
-
-.h-100 {
-  height: 100%;
-}
-
-// 移动端响应式适配
-@media (max-width: 599.98px) {
-  .dash-card {
-    transition: none !important;
-
-    &:hover {
-      transform: none !important;
-      box-shadow: none !important;
-    }
-  }
-
-  .dash-stat-card {
-    height: auto;
-    min-height: 90px;
-  }
-
-  .dash-mid-card {
-    height: auto;
-  }
-
-  .stat-card-text {
-    padding: 10px !important;
-    flex-wrap: nowrap !important;
-  }
-
-  .stat-number {
-    font-size: 1.15rem !important;
-    line-height: 1.3;
-  }
-
-  .stat-icon {
-    width: 32px;
-    height: 32px;
-    border-radius: 8px;
-    margin-inline-start: 4px;
-
-    .v-icon {
-      font-size: 16px !important;
-    }
-  }
-}
-
-// 平板适配
-@media (min-width: 600px) and (max-width: 959.98px) {
-  .stat-number {
-    font-size: 1.5rem !important;
-  }
-}
-</style>

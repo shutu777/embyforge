@@ -132,6 +132,14 @@ async function changePassword() {
 
 <template>
   <div>
+    <!-- 页面标题和说明 -->
+    <div class="mb-6">
+      <h1 class="text-h4 font-weight-bold mb-2">个人资料</h1>
+      <p class="text-body-1 text-medium-emphasis">
+        管理账户头像、密码等个人信息
+      </p>
+    </div>
+
     <div v-if="loading" class="d-flex justify-center align-center" style="min-height: 300px;">
       <VProgressCircular indeterminate color="primary" size="48" />
     </div>

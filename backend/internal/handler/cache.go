@@ -93,71 +93,22 @@ type CacheHandler struct {
 	DB           *gorm.DB
 	JWTSecret    string
 	CacheService *service.CacheService
+	SyncLock     *service.SyncLock
+	EventBuffer  *service.EventBuffer
 
 	syncMu     sync.Mutex
 	activeSync *activeSync
-
-	wsListener *emby.LibraryWatcher // Emby 媒体库变更轮询监听器
 }
 
 // NewCacheHandler 创建缓存处理器
-func NewCacheHandler(db *gorm.DB, jwtSecret string) *CacheHandler {
+func NewCacheHandler(db *gorm.DB, jwtSecret string, syncLock *service.SyncLock, eventBuffer *service.EventBuffer) *CacheHandler {
 	return &CacheHandler{
 		DB:           db,
 		JWTSecret:    jwtSecret,
 		CacheService: service.NewCacheService(db),
+		SyncLock:     syncLock,
+		EventBuffer:  eventBuffer,
 	}
-}
-
-// StartWSListener 启动 Emby 媒体库变更轮询监听
-// 定时检查 Emby 媒体库变更（新增/修改/删除），自动同步到本地缓存
-func (h *CacheHandler) StartWSListener() {
-	if h.wsListener != nil && h.wsListener.IsRunning() {
-		return
-	}
-
-	client, err := h.getEmbyClient()
-	if err != nil {
-		log.Printf("⚠️ 无法启动媒体库监听：Emby 未配置")
-		return
-	}
-
-	// 获取数据库中最后同步时间，作为轮询起点
-	var lastSyncAt time.Time
-	status, err := h.CacheService.GetCacheStatus()
-	if err == nil && status.LastSyncAt != nil {
-		lastSyncAt = *status.LastSyncAt
-	}
-
-	h.wsListener = emby.NewLibraryWatcher(client, func(items []emby.MediaItem, removed []string) {
-		// 删除检测需要拉取全量 ID（~294K），给更长的超时时间
-		timeout := 10 * time.Minute
-		if len(removed) == 1 && removed[0] == "__DETECT_DELETIONS__" {
-			timeout = 30 * time.Minute
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		defer cancel()
-		c, err := h.getEmbyClient()
-		if err != nil {
-			log.Printf("⚠️ 实时同步获取 Emby 客户端失败: %v", err)
-			return
-		}
-		h.CacheService.HandleLibraryChanged(ctx, c, items, removed)
-	}, 5*time.Minute, lastSyncAt)
-	h.wsListener.Start()
-}
-
-// StopWSListener 停止 Emby WebSocket 监听
-func (h *CacheHandler) StopWSListener() {
-	if h.wsListener != nil {
-		h.wsListener.Stop()
-		h.wsListener = nil
-	}
-}
-
-// GetWSListenerStatus 获取 WebSocket 监听器状态
-func (h *CacheHandler) GetWSListenerStatus() bool {
-	return h.wsListener != nil && h.wsListener.IsRunning()
 }
 
 // getEmbyClient 从数据库获取 Emby 配置并创建客户端
@@ -170,9 +121,8 @@ func (h *CacheHandler) getEmbyClient() (*emby.Client, error) {
 }
 
 // startSync 启动后台同步任务（如果没有正在运行的同步）
-// fullSync=true 时强制全量同步，否则尝试增量同步
 // 返回 activeSync、是否是新启动的、错误信息
-func (h *CacheHandler) startSync(client *emby.Client, fullSync bool) (*activeSync, bool, string) {
+func (h *CacheHandler) startSync(client *emby.Client) (*activeSync, bool, string) {
 	h.syncMu.Lock()
 	defer h.syncMu.Unlock()
 
@@ -181,10 +131,13 @@ func (h *CacheHandler) startSync(client *emby.Client, fullSync bool) (*activeSyn
 		return h.activeSync, false, ""
 	}
 
-	// 检查实时监控是否正在处理
-	if h.wsListener != nil && h.wsListener.IsBusy() {
-		return nil, false, "实时监控正在同步中，请稍后再试"
+	// 尝试获取同步锁
+	if !h.SyncLock.TryLock("full_sync") {
+		return nil, false, fmt.Sprintf("同步锁被占用 (%s)，请稍后再试", h.SyncLock.Holder())
 	}
+
+	// 取出缓冲事件（全量同步后协调）
+	bufferedEvents := h.EventBuffer.DrainEvents()
 
 	// 创建独立的 context（不绑定任何 HTTP 请求）
 	ctx, cancel := context.WithTimeout(context.Background(), defaultSyncTimeout)
@@ -198,23 +151,18 @@ func (h *CacheHandler) startSync(client *emby.Client, fullSync bool) (*activeSyn
 
 	// 启动同步 goroutine
 	go func() {
-		// 通知 watcher 暂停轮询，避免冲突
-		if h.wsListener != nil {
-			h.wsListener.SetSyncActive(true)
-		}
-
-		if fullSync {
-			log.Printf("🔄 启动全量同步模式")
-			h.CacheService.SyncMediaCacheWithProgress(ctx, client, progressCh)
-		} else {
-			log.Printf("🔄 启动增量同步模式")
-			h.CacheService.IncrementalSyncMediaCacheWithProgress(ctx, client, progressCh)
-		}
+		log.Printf("🔄 启动全量同步模式")
+		h.CacheService.SyncMediaCacheWithProgress(ctx, client, progressCh)
 		cancel()
 
-		// 同步结束，恢复轮询
-		if h.wsListener != nil {
-			h.wsListener.SetSyncActive(false)
+		// 释放同步锁
+		h.SyncLock.Unlock()
+
+		// 全量同步后协调缓冲事件
+		if len(bufferedEvents) > 0 {
+			reconcileCtx, reconcileCancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			defer reconcileCancel()
+			h.CacheService.ReconcileBufferedEvents(reconcileCtx, client, h.SyncLock, bufferedEvents)
 		}
 	}()
 
@@ -294,10 +242,17 @@ func (h *CacheHandler) GetCacheStatus(c *gin.Context) {
 		return
 	}
 
+	// 构建 Emby Webhook URL：使用请求的协议和 Host（经过反代后是正确的外部地址）
+	scheme := "http"
+	if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	webhookURL := fmt.Sprintf("%s://%s/api/webhook/emby", scheme, c.Request.Host)
+
 	c.JSON(http.StatusOK, gin.H{
-		"data": status,
-		"ws_listening": h.GetWSListenerStatus(),
-		"ws_busy":      h.wsListener != nil && h.wsListener.IsBusy(),
+		"data":           status,
+		"pending_events": h.EventBuffer.PendingCount(),
+		"webhook_url":    webhookURL,
 	})
 }
 
@@ -354,18 +309,13 @@ func (h *CacheHandler) SyncCacheStream(c *gin.Context) {
 	}
 
 	// 启动或获取已有的同步任务
-	fullSync := c.Query("fullSync") == "true"
-	as, isNew, busyMsg := h.startSync(client, fullSync)
+	as, isNew, busyMsg := h.startSync(client)
 	if busyMsg != "" {
 		c.JSON(http.StatusConflict, gin.H{"code": 409, "message": busyMsg})
 		return
 	}
 	if isNew {
-		mode := "增量"
-		if fullSync {
-			mode = "全量"
-		}
-		log.Printf("🔄 SSE 触发新%s同步任务 (用户: %s)", mode, claims.Username)
+		log.Printf("🔄 SSE 触发全量同步任务 (用户: %s)", claims.Username)
 	} else {
 		log.Printf("🔄 SSE 连接到已有同步任务 (用户: %s)", claims.Username)
 	}

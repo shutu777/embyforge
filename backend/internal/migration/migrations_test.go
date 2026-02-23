@@ -106,8 +106,8 @@ func TestMigration_Idempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("获取版本失败: %v", err)
 	}
-	if ver != 7 {
-		t.Errorf("版本号不匹配: got %d, want 7", ver)
+	if ver != 10 {
+		t.Errorf("版本号不匹配: got %d, want 10", ver)
 	}
 }
 

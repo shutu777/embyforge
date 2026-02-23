@@ -77,81 +77,91 @@ async function testConnection() {
 </script>
 
 <template>
-  <VCard title="Emby 配置" data-no-hover>
-    <VCardText>
-      <VForm @submit.prevent="saveConfig">
-        <VRow>
-          <VCol cols="12" md="8">
-            <VTextField
-              v-model="host"
-              label="服务器地址"
-              placeholder="http://192.168.1.100"
-              hint="例如 http://192.168.1.100"
-              persistent-hint
-            />
-          </VCol>
-          <VCol cols="12" md="4">
-            <VTextField
-              v-model.number="port"
-              label="端口"
-              type="number"
-              placeholder="8096"
-            />
-          </VCol>
-          <VCol cols="12">
-            <VTextField
-              v-model="apiKey"
-              label="API Key"
-              placeholder="输入 Emby API Key"
-              type="password"
-            />
-          </VCol>
-          <VCol cols="12">
-            <VDivider class="mb-2" />
-            <div class="text-subtitle-2 text-medium-emphasis mb-2">
-              用户认证（删除操作需要）
-            </div>
-          </VCol>
-          <VCol cols="12" md="6">
-            <VTextField
-              v-model="username"
-              label="Emby 用户名"
-              placeholder="输入 Emby 用户名"
-              hint="用于删除媒体时的用户认证"
-              persistent-hint
-            />
-          </VCol>
-          <VCol cols="12" md="6">
-            <VTextField
-              v-model="password"
-              label="Emby 密码"
-              :placeholder="hasPassword ? '已保存，留空则不修改' : '输入 Emby 密码'"
-              type="password"
-              :hint="hasPassword ? '已保存密码，留空则保持不变' : '用于删除媒体时的用户认证'"
-              persistent-hint
-            />
-          </VCol>
-          <VCol cols="12">
-            <div class="d-flex flex-wrap gap-3">
-              <VBtn
-                type="submit"
-                color="primary"
-                :loading="saving"
-              >
-                保存配置
-              </VBtn>
-              <VBtn
-                color="secondary"
-                variant="outlined"
-                :loading="testing"
-                @click="testConnection"
-              >
-                测试连接
-              </VBtn>
-            </div>
-          </VCol>
-        </VRow>
-      </VForm>
-    </VCardText>
-  </VCard>
+  <div>
+    <!-- 页面标题和说明 -->
+    <div class="mb-6">
+      <h1 class="text-h4 font-weight-bold mb-2">Emby 配置</h1>
+      <p class="text-body-1 text-medium-emphasis">
+        配置 Emby 服务器连接信息和用户认证，用于媒体库数据同步和管理操作
+      </p>
+    </div>
+
+    <VCard variant="flat" class="content-card" data-no-hover>
+      <VCardText class="pa-5">
+        <VForm @submit.prevent="saveConfig">
+          <VRow>
+            <VCol cols="12" md="8">
+              <VTextField
+                v-model="host"
+                label="服务器地址"
+                placeholder="http://192.168.1.100"
+                hint="例如 http://192.168.1.100"
+                persistent-hint
+              />
+            </VCol>
+            <VCol cols="12" md="4">
+              <VTextField
+                v-model.number="port"
+                label="端口"
+                type="number"
+                placeholder="8096"
+              />
+            </VCol>
+            <VCol cols="12">
+              <VTextField
+                v-model="apiKey"
+                label="API Key"
+                placeholder="输入 Emby API Key"
+                type="password"
+              />
+            </VCol>
+            <VCol cols="12">
+              <VDivider class="mb-2" />
+              <div class="text-subtitle-2 text-medium-emphasis mb-2">
+                用户认证（删除操作需要）
+              </div>
+            </VCol>
+            <VCol cols="12" md="6">
+              <VTextField
+                v-model="username"
+                label="Emby 用户名"
+                placeholder="输入 Emby 用户名"
+                hint="用于删除媒体时的用户认证"
+                persistent-hint
+              />
+            </VCol>
+            <VCol cols="12" md="6">
+              <VTextField
+                v-model="password"
+                label="Emby 密码"
+                :placeholder="hasPassword ? '已保存，留空则不修改' : '输入 Emby 密码'"
+                type="password"
+                :hint="hasPassword ? '已保存密码，留空则保持不变' : '用于删除媒体时的用户认证'"
+                persistent-hint
+              />
+            </VCol>
+            <VCol cols="12">
+              <div class="d-flex flex-wrap gap-3">
+                <VBtn
+                  type="submit"
+                  color="primary"
+                  :loading="saving"
+                >
+                  保存配置
+                </VBtn>
+                <VBtn
+                  color="secondary"
+                  variant="outlined"
+                  :loading="testing"
+                  @click="testConnection"
+                >
+                  测试连接
+                </VBtn>
+              </div>
+            </VCol>
+          </VRow>
+        </VForm>
+      </VCardText>
+    </VCard>
+  </div>
 </template>

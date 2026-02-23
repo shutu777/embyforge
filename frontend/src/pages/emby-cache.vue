@@ -139,14 +139,22 @@ onMounted(async () => { await Promise.all([fetchList(), fetchCacheStatus()]) })
 
 <template>
   <div>
+    <!-- 页面标题和说明 -->
+    <div class="mb-6">
+      <h1 class="text-h4 font-weight-bold mb-2">Emby 缓存管理</h1>
+      <p class="text-body-1 text-medium-emphasis">
+        查看和管理本地缓存的 Emby 媒体库数据，支持按类型浏览和搜索
+      </p>
+    </div>
+
     <!-- 统计卡片 -->
-    <VRow class="mb-4">
-      <VCol cols="12" sm="4">
-        <VCard class="stat-card" style="height: 120px;">
-          <VCardText class="d-flex align-center justify-space-between h-100 pa-5">
-            <div>
+    <VRow class="mb-4 match-height">
+      <VCol cols="6" sm="4">
+        <VCard class="stat-card">
+          <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
+            <div class="stat-text-wrap">
               <div class="text-body-2 text-medium-emphasis mb-1">电影</div>
-              <div class="text-h4 font-weight-bold">{{ totalMovies.toLocaleString() }}</div>
+              <div class="font-weight-bold stat-number">{{ totalMovies.toLocaleString() }}</div>
             </div>
             <div class="stat-icon" style="background: #6366f118;">
               <VIcon icon="ri-film-fill" color="#6366f1" size="24" />
@@ -154,12 +162,12 @@ onMounted(async () => { await Promise.all([fetchList(), fetchCacheStatus()]) })
           </VCardText>
         </VCard>
       </VCol>
-      <VCol cols="12" sm="4">
-        <VCard class="stat-card" style="height: 120px;">
-          <VCardText class="d-flex align-center justify-space-between h-100 pa-5">
-            <div>
+      <VCol cols="6" sm="4">
+        <VCard class="stat-card">
+          <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
+            <div class="stat-text-wrap">
               <div class="text-body-2 text-medium-emphasis mb-1">剧集</div>
-              <div class="text-h4 font-weight-bold">{{ totalSeries.toLocaleString() }}</div>
+              <div class="font-weight-bold stat-number">{{ totalSeries.toLocaleString() }}</div>
             </div>
             <div class="stat-icon" style="background: #8b5cf618;">
               <VIcon icon="ri-tv-2-fill" color="#8b5cf6" size="24" />
@@ -168,11 +176,11 @@ onMounted(async () => { await Promise.all([fetchList(), fetchCacheStatus()]) })
         </VCard>
       </VCol>
       <VCol cols="12" sm="4">
-        <VCard class="stat-card" style="height: 120px;">
-          <VCardText class="d-flex align-center justify-space-between h-100 pa-5">
-            <div>
+        <VCard class="stat-card">
+          <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
+            <div class="stat-text-wrap">
               <div class="text-body-2 text-medium-emphasis mb-1">总计</div>
-              <div class="text-h4 font-weight-bold">{{ (totalMovies + totalSeries).toLocaleString() }}</div>
+              <div class="font-weight-bold stat-number">{{ (totalMovies + totalSeries).toLocaleString() }}</div>
             </div>
             <div class="stat-icon" style="background: #10b98118;">
               <VIcon icon="ri-database-2-fill" color="#10b981" size="24" />
@@ -365,45 +373,7 @@ onMounted(async () => { await Promise.all([fetchList(), fetchCacheStatus()]) })
 </template>
 
 <style lang="scss" scoped>
-.stat-card {
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-}
-
-.stat-icon {
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  margin-inline-start: 8px;
-}
-
-.h-100 {
-  height: 100%;
-}
-
-.content-card {
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  transform: none !important;
-  box-shadow: none !important;
-}
-
-.mobile-items {
-  .mobile-item {
-    border-block-end: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-
-    &:last-child {
-      border-block-end: none;
-    }
-  }
-}
-
-.table-responsive {
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-}
+// 页面特有样式（通用样式已提取到 page-common.scss）
 
 .provider-cell {
   max-width: 200px;
@@ -414,12 +384,5 @@ onMounted(async () => { await Promise.all([fetchList(), fetchCacheStatus()]) })
 
 .action-btns {
   gap: 2px;
-}
-
-@media (max-width: 599.98px) {
-  .stat-icon {
-    width: 40px;
-    height: 40px;
-  }
 }
 </style>

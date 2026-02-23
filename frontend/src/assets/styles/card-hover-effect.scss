@@ -1,11 +1,13 @@
-// 卡片悬浮放大效果 - 排除 content-card 大卡片
-.v-theme--light .v-card:not([data-no-hover]),
-.v-theme--dark .v-card:not([data-no-hover]) {
-  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), 
+// 卡片悬浮效果 - 统一管理所有卡片的 hover 行为
+// 规则：带 data-no-hover 属性的卡片完全禁用悬浮效果
+
+// 默认卡片悬浮效果
+.v-card:not([data-no-hover]) {
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
               box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
   will-change: transform;
   cursor: pointer;
-  
+
   &:hover {
     transform: scale(1.02) translateY(-4px) !important;
     box-shadow: 0 8px 24px 0 rgba(var(--v-shadow-key-umbra-color), 0.18) !important;
@@ -13,21 +15,12 @@
   }
 }
 
-// 确保所有卡片都有悬浮效果（排除 content-card）
-.v-row .v-col .v-card:not([data-no-hover]),
-.match-height .v-card:not([data-no-hover]) {
-  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), 
-              box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
-  cursor: pointer;
-  
-  &:hover {
-    transform: scale(1.02) translateY(-4px) !important;
-    box-shadow: 0 8px 24px 0 rgba(var(--v-shadow-key-umbra-color), 0.18) !important;
-    z-index: 1;
-  }
+// 深色模式下的卡片悬浮
+.v-theme--dark .v-card:not([data-no-hover]):hover {
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35) !important;
 }
 
-// 大卡片禁用悬浮
+// 禁用悬浮的卡片
 .v-card[data-no-hover] {
   cursor: default !important;
   will-change: auto !important;
@@ -38,21 +31,32 @@
     box-shadow: none !important;
     z-index: auto !important;
   }
+
+  // 禁用光扫效果
+  &::before {
+    display: none !important;
+  }
 }
 
-// 移动端禁用卡片悬浮效果
+// 移动端禁用所有卡片悬浮效果
 @media (max-width: 599.98px) {
-  .v-theme--light .v-card:not([data-no-hover]),
-  .v-theme--dark .v-card:not([data-no-hover]),
-  .v-row .v-col .v-card:not([data-no-hover]),
-  .match-height .v-card:not([data-no-hover]) {
+  .v-card:not([data-no-hover]) {
     will-change: auto !important;
     cursor: default !important;
+    transition: none !important;
+
+    &::before {
+      display: none;
+    }
 
     &:hover {
       transform: none !important;
       box-shadow: none !important;
       z-index: auto !important;
     }
+  }
+
+  .v-theme--dark .v-card:not([data-no-hover]):hover {
+    box-shadow: none !important;
   }
 }

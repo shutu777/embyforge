@@ -136,8 +136,16 @@ function getChildCount(item) {
 
 <template>
   <div>
+    <!-- 页面标题和说明 -->
+    <div class="mb-6">
+      <h1 class="text-h4 font-weight-bold mb-2">快速删除</h1>
+      <p class="text-body-1 text-medium-emphasis">
+        搜索 Emby 媒体库中的电影或剧集，快速定位并删除指定条目
+      </p>
+    </div>
+
     <!-- 搜索卡片 -->
-    <VCard variant="flat" class="content-card mb-4" data-no-hover>
+    <VCard variant="flat" class="content-card mb-7" data-no-hover>
       <VCardText class="pa-5">
         <div class="d-flex align-center mb-4">
           <VAvatar color="error" variant="tonal" size="42" rounded="lg" class="me-3">
@@ -348,11 +356,7 @@ function getChildCount(item) {
 </template>
 
 <style lang="scss" scoped>
-.content-card {
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  transform: none !important;
-  box-shadow: none !important;
-}
+// 页面特有样式（通用样式已提取到 page-common.scss）
 
 .result-card {
   border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));

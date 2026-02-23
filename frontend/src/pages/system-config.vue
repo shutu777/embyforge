@@ -63,50 +63,60 @@ async function saveConfig(config) {
 </script>
 
 <template>
-  <VCard title="系统配置" data-no-hover>
-    <VCardText>
-      <!-- 加载状态 -->
-      <div v-if="loading" class="d-flex justify-center py-6">
-        <VProgressCircular indeterminate color="primary" />
-      </div>
+  <div>
+    <!-- 页面标题和说明 -->
+    <div class="mb-6">
+      <h1 class="text-h4 font-weight-bold mb-2">系统配置</h1>
+      <p class="text-body-1 text-medium-emphasis">
+        管理 EmbyForge 系统级配置参数，包括 TMDB API 密钥等全局设置
+      </p>
+    </div>
 
-      <!-- 配置列表 -->
-      <VRow v-else>
-        <VCol
-          v-for="config in configs"
-          :key="config.key"
-          cols="12"
-        >
-          <VTextField
-            v-model="config.editValue"
-            :label="config.description || config.key"
-            :placeholder="`输入 ${config.key}`"
-            :type="isSensitive(config.key) && !visibleKeys[config.key] ? 'password' : 'text'"
-            :append-inner-icon="isSensitive(config.key) ? (visibleKeys[config.key] ? 'ri-eye-off-line' : 'ri-eye-line') : undefined"
-            persistent-hint
-            :hint="`键名: ${config.key}`"
-            @click:append-inner="visibleKeys[config.key] = !visibleKeys[config.key]"
+    <VCard variant="flat" class="content-card" data-no-hover>
+      <VCardText class="pa-5">
+        <!-- 加载状态 -->
+        <div v-if="loading" class="d-flex justify-center py-6">
+          <VProgressCircular indeterminate color="primary" />
+        </div>
+
+        <!-- 配置列表 -->
+        <VRow v-else>
+          <VCol
+            v-for="config in configs"
+            :key="config.key"
+            cols="12"
           >
-            <template #append>
-              <VBtn
-                color="primary"
-                size="small"
-                :loading="savingKeys[config.key]"
-                @click="saveConfig(config)"
-              >
-                保存
-              </VBtn>
-            </template>
-          </VTextField>
-        </VCol>
+            <VTextField
+              v-model="config.editValue"
+              :label="config.description || config.key"
+              :placeholder="`输入 ${config.key}`"
+              :type="isSensitive(config.key) && !visibleKeys[config.key] ? 'password' : 'text'"
+              :append-inner-icon="isSensitive(config.key) ? (visibleKeys[config.key] ? 'ri-eye-off-line' : 'ri-eye-line') : undefined"
+              persistent-hint
+              :hint="`键名: ${config.key}`"
+              @click:append-inner="visibleKeys[config.key] = !visibleKeys[config.key]"
+            >
+              <template #append>
+                <VBtn
+                  color="primary"
+                  size="small"
+                  :loading="savingKeys[config.key]"
+                  @click="saveConfig(config)"
+                >
+                  保存
+                </VBtn>
+              </template>
+            </VTextField>
+          </VCol>
 
-        <!-- 空状态 -->
-        <VCol v-if="!loading && configs.length === 0" cols="12">
-          <VAlert type="info">
-            暂无配置项
-          </VAlert>
-        </VCol>
-      </VRow>
-    </VCardText>
-  </VCard>
+          <!-- 空状态 -->
+          <VCol v-if="!loading && configs.length === 0" cols="12">
+            <VAlert type="info">
+              暂无配置项
+            </VAlert>
+          </VCol>
+        </VRow>
+      </VCardText>
+    </VCard>
+  </div>
 </template>

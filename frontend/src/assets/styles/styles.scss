@@ -4,6 +4,9 @@
 // 卡片悬浮效果
 @import './card-hover-effect.scss';
 
+// 页面通用样式（统计卡片、内容卡片、间距、响应式）
+@import './page-common.scss';
+
 // 禁用导航菜单的所有 tooltip
 .layout-vertical-nav,
 .layout-vertical-nav * {

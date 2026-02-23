@@ -8,13 +8,10 @@ const snackbar = useSnackbar()
 // 缓存状态
 const cacheStatus = ref(null)
 const loadingStatus = ref(false)
-const wsListening = ref(false) // WebSocket 实时监听状态
-const wsBusy = ref(false) // 实时监控正在同步中
 
 // 同步状态
 const syncing = ref(false)
 const syncResult = ref(null)
-const fullSync = ref(false) // 全量同步开关
 
 // SSE 进度状态
 const syncProgress = ref(null)
@@ -22,6 +19,18 @@ let eventSource = null
 
 const hasCache = computed(() => cacheStatus.value && cacheStatus.value.total_items > 0)
 const isIndeterminate = computed(() => syncProgress.value && syncProgress.value.total === 0)
+
+// Webhook 配置
+const pendingEvents = ref(0)
+const webhookUrl = ref('')
+
+function copyWebhookUrl() {
+  navigator.clipboard.writeText(webhookUrl.value).then(() => {
+    snackbar.success('Webhook 地址已复制到剪贴板')
+  }).catch(() => {
+    snackbar.error('复制失败，请手动复制')
+  })
+}
 
 // 格式化时间
 function formatTime(timeStr) {
@@ -48,8 +57,10 @@ async function fetchCacheStatus() {
   try {
     const { data } = await api.get('/cache/status')
     cacheStatus.value = data.data
-    wsListening.value = data.ws_listening || false
-    wsBusy.value = data.ws_busy || false
+    pendingEvents.value = data.pending_events || 0
+    if (data.webhook_url) {
+      webhookUrl.value = data.webhook_url
+    }
   } catch (e) {
     console.error('获取缓存状态失败', e)
   } finally {
@@ -81,8 +92,7 @@ function connectSSE() {
   }
 
   const baseURL = import.meta.env.VITE_API_BASE_URL || '/api'
-  const fullSyncParam = fullSync.value ? '&fullSync=true' : ''
-  eventSource = new EventSource(`${baseURL}/cache/sync/stream?token=${encodeURIComponent(token)}${fullSyncParam}`)
+  eventSource = new EventSource(`${baseURL}/cache/sync/stream?token=${encodeURIComponent(token)}&fullSync=true`)
 
   eventSource.addEventListener('progress', (e) => {
     try {
@@ -135,17 +145,7 @@ function connectSSE() {
 }
 
 function syncMedia() {
-  // 先刷新状态，检查实时监控是否忙碌
-  api.get('/cache/status').then(({ data }) => {
-    wsBusy.value = data.ws_busy || false
-    if (data.ws_busy) {
-      snackbar.error('实时监控正在同步中，请稍后再试')
-      return
-    }
-    connectSSE()
-  }).catch(() => {
-    connectSSE()
-  })
+  connectSSE()
 }
 
 async function checkActiveSync() {
@@ -178,6 +178,14 @@ onBeforeUnmount(closeSSE)
 
 <template>
   <div class="media-scan">
+    <!-- 页面标题和说明 -->
+    <div class="mb-6">
+      <h1 class="text-h4 font-weight-bold mb-2">媒体库同步</h1>
+      <p class="text-body-1 text-medium-emphasis">
+        从 Emby 服务器同步媒体库数据到本地缓存，支持全量同步和 Webhook 自动增量同步
+      </p>
+    </div>
+
     <!-- 加载中 -->
     <div v-if="loadingStatus" class="d-flex justify-center align-center" style="min-height: 300px;">
       <VProgressCircular indeterminate color="primary" size="48" />
@@ -185,13 +193,13 @@ onBeforeUnmount(closeSSE)
 
     <template v-else>
       <!-- 第一行：缓存统计卡片 -->
-      <VRow class="mb-4">
+      <VRow class="mb-4 match-height">
         <VCol cols="6" sm="4">
-          <VCard class="dash-card" style="height: 120px;">
+          <VCard class="stat-card">
             <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
-              <div>
+              <div class="stat-text-wrap">
                 <div class="text-body-2 text-medium-emphasis mb-1">媒体条目</div>
-                <div class="text-h4 font-weight-bold stat-number">
+                <div class="font-weight-bold stat-number">
                   {{ hasCache ? cacheStatus.total_items.toLocaleString() : '0' }}
                 </div>
               </div>
@@ -202,11 +210,11 @@ onBeforeUnmount(closeSSE)
           </VCard>
         </VCol>
         <VCol cols="6" sm="4">
-          <VCard class="dash-card" style="height: 120px;">
+          <VCard class="stat-card">
             <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
-              <div>
+              <div class="stat-text-wrap">
                 <div class="text-body-2 text-medium-emphasis mb-1">季缓存</div>
-                <div class="text-h4 font-weight-bold stat-number">
+                <div class="font-weight-bold stat-number">
                   {{ hasCache ? cacheStatus.total_seasons.toLocaleString() : '0' }}
                 </div>
               </div>
@@ -217,11 +225,11 @@ onBeforeUnmount(closeSSE)
           </VCard>
         </VCol>
         <VCol cols="12" sm="4">
-          <VCard class="dash-card" style="height: 120px;">
+          <VCard class="stat-card">
             <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
-              <div>
+              <div class="stat-text-wrap">
                 <div class="text-body-2 text-medium-emphasis mb-1">最后同步</div>
-                <div class="text-h6 font-weight-bold">
+                <div class="font-weight-bold stat-number">
                   {{ hasCache ? formatTime(cacheStatus.last_sync_at) : '-' }}
                 </div>
               </div>
@@ -234,68 +242,37 @@ onBeforeUnmount(closeSSE)
       </VRow>
 
       <!-- 第二行：同步操作 -->
-      <VCard class="dash-card" data-no-hover>
+      <VCard variant="flat" class="content-card mb-7" data-no-hover>
         <VCardText class="pa-5">
           <div class="d-flex align-center mb-4">
             <VAvatar color="primary" variant="tonal" size="42" rounded="lg" class="me-3">
               <VIcon icon="ri-refresh-line" size="22" />
             </VAvatar>
             <div>
-              <div class="text-body-1 font-weight-semibold">同步媒体库</div>
+              <div class="text-body-1 font-weight-semibold">全量同步媒体库</div>
               <div class="text-body-2 text-medium-emphasis">
-                从 Emby 服务器拉取媒体库信息并缓存到本地，用于后续分析检测
+                从 Emby 服务器拉取完整媒体库信息并缓存到本地，用于后续分析检测
               </div>
             </div>
           </div>
 
           <VAlert type="warning" variant="tonal" density="compact" class="mb-4">
-            同步前请已使用最新的目录树生成 strm 文件，否则缓存数据可能不准确
+            同步前请确认已使用最新的目录树生成 strm 文件，否则缓存数据可能不准确
           </VAlert>
 
-          <div class="d-flex align-center flex-wrap ga-3">
-            <VBtn
-              color="primary"
-              :disabled="syncing || wsBusy"
-              :loading="syncing && !syncProgress"
-              size="default"
-              @click="syncMedia"
-            >
-              <VIcon icon="ri-loop-left-line" class="me-1" />
-              {{ wsBusy ? '实时监控同步中...' : syncing ? '同步中...' : '开始同步' }}
-            </VBtn>
-
-            <div class="sync-mode-group">
-              <button
-                type="button"
-                class="sync-mode-btn"
-                :class="{ active: !fullSync }"
-                :disabled="syncing"
-                @click="fullSync = false"
-              >
-                增量
-              </button>
-              <button
-                type="button"
-                class="sync-mode-btn warn"
-                :class="{ active: fullSync }"
-                :disabled="syncing"
-                @click="fullSync = true"
-              >
-                全量
-              </button>
-            </div>
-          </div>
+          <VBtn
+            color="primary"
+            :disabled="syncing"
+            :loading="syncing && !syncProgress"
+            size="default"
+            @click="syncMedia"
+          >
+            <VIcon icon="ri-loop-left-line" class="me-1" />
+            {{ syncing ? '同步中...' : '开始全量同步' }}
+          </VBtn>
 
           <div class="text-caption text-medium-emphasis mt-2">
-            {{ fullSync ? '⚠ 将清空本地缓存并从 Emby 重新拉取所有数据' : 'ℹ 仅同步新增和修改的数据，并自动检测删除' }}
-          </div>
-
-          <!-- 媒体库自动监听状态 -->
-          <div class="d-flex align-center mt-3">
-            <span class="ws-dot" :class="wsListening ? 'online' : 'offline'" />
-            <span class="text-caption" :class="wsListening ? 'text-success' : 'text-medium-emphasis'">
-              {{ wsListening ? (wsBusy ? '自动监听中 — 正在处理媒体库变更...' : '自动监听中 — Emby 媒体库变更每 5 分钟自动同步') : '自动监听未启动' }}
-            </span>
+            ⚠ 将清空本地缓存并从 Emby 重新拉取所有数据
           </div>
 
           <!-- 进度条区域 -->
@@ -309,7 +286,7 @@ onBeforeUnmount(closeSSE)
                 class="me-2"
               />
               <span class="text-body-2 font-weight-medium">
-                正在{{ syncProgress.phase === 'season' ? '重建季缓存' : syncProgress.phase === 'delete' ? '检测已删除条目' : '同步媒体库' }}
+                正在{{ syncProgress.phase === 'season' ? '重建季缓存' : '同步媒体库' }}
               </span>
             </div>
 
@@ -346,13 +323,7 @@ onBeforeUnmount(closeSSE)
               <div>
                 <div class="text-body-2 font-weight-semibold">同步完成</div>
                 <div class="text-caption text-medium-emphasis">
-                  <template v-if="syncResult.is_incremental">
-                    增量同步：新增 {{ syncResult.new_items?.toLocaleString() }} 个，更新 {{ syncResult.updated_items?.toLocaleString() }} 个，删除 {{ syncResult.deleted_items?.toLocaleString() || 0 }} 个，
-                    当前共 {{ syncResult.total_items?.toLocaleString() }} 个媒体条目，{{ syncResult.total_seasons?.toLocaleString() }} 个季，耗时 {{ formatDuration(syncResult.elapsed_ms) }}
-                  </template>
-                  <template v-else>
-                    全量同步：共 {{ syncResult.total_items?.toLocaleString() }} 个媒体条目，{{ syncResult.total_seasons?.toLocaleString() }} 个季，耗时 {{ formatDuration(syncResult.elapsed_ms) }}
-                  </template>
+                  共 {{ syncResult.total_items?.toLocaleString() }} 个媒体条目，{{ syncResult.total_seasons?.toLocaleString() }} 个季，耗时 {{ formatDuration(syncResult.elapsed_ms) }}
                 </div>
               </div>
             </VCardText>
@@ -376,35 +347,83 @@ onBeforeUnmount(closeSSE)
           </VCard>
         </VCardText>
       </VCard>
+
+      <!-- 第三行：Emby Webhook 配置引导 -->
+      <VCard variant="flat" class="content-card" data-no-hover>
+        <VCardText class="pa-5">
+          <div class="d-flex align-center justify-space-between mb-4">
+            <div class="d-flex align-center">
+              <VAvatar color="success" variant="tonal" size="42" rounded="lg" class="me-3">
+                <VIcon icon="ri-webhook-line" size="22" />
+              </VAvatar>
+              <div>
+                <div class="text-body-1 font-weight-semibold">Emby Webhook 自动同步</div>
+                <div class="text-body-2 text-medium-emphasis">
+                  配置 Webhook 后，媒体库变更将自动推送到本地缓存
+                </div>
+              </div>
+            </div>
+            <VChip v-if="pendingEvents > 0" color="warning" variant="tonal" size="small">
+              <VIcon icon="ri-loader-4-line" size="14" class="me-1" />
+              {{ pendingEvents }} 待处理
+            </VChip>
+          </div>
+
+          <!-- Webhook 地址区域 -->
+          <VCard variant="tonal" color="success" class="mb-4" flat data-no-hover>
+            <VCardText class="pa-4">
+              <div class="text-body-2 font-weight-semibold mb-2">
+                <VIcon icon="ri-check-line" size="18" class="me-1" />
+                Webhook 地址
+              </div>
+              <div class="d-flex align-center">
+                <VTextField
+                  :model-value="webhookUrl"
+                  readonly
+                  density="compact"
+                  variant="outlined"
+                  hide-details
+                  class="me-2"
+                />
+                <VBtn
+                  color="success"
+                  variant="tonal"
+                  @click="copyWebhookUrl"
+                >
+                  <VIcon icon="ri-file-copy-line" class="me-1" />
+                  复制
+                </VBtn>
+              </div>
+            </VCardText>
+          </VCard>
+
+          <div class="text-body-2 font-weight-medium mb-2">
+            <VIcon icon="ri-question-line" size="18" class="me-1" />
+            如何在 Emby 中配置 Webhook？
+          </div>
+          <ol class="text-body-2 ps-4 mb-4" style="line-height: 1.9;">
+            <li>打开 Emby 服务器管理面板</li>
+            <li>进入 <strong>服务器 → 通知</strong>（或安装 Webhooks 插件）</li>
+            <li>添加一个新的 Webhook 通知</li>
+            <li>将上方的 Webhook 地址填入 URL 字段</li>
+            <li>Request Content Type 选择 <strong>application/json</strong></li>
+            <li>勾选 <strong>新媒体入库</strong> 和 <strong>媒体已移除</strong> 事件</li>
+            <li>保存配置即可，后续媒体库变更会自动推送到 EmbyForge</li>
+          </ol>
+          <VAlert type="warning" variant="tonal" density="compact">
+            <div class="text-body-2">
+              如果 EmbyForge 部署在 Docker 中，请确保 Emby 服务器能访问到此地址。
+              使用 Docker 内部网络时，地址可能需要替换为容器名或内网 IP。
+            </div>
+          </VAlert>
+        </VCardText>
+      </VCard>
     </template>
   </div>
 </template>
 
 <style lang="scss" scoped>
-.dash-card {
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-
-  &:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-  }
-}
-
-.stat-icon {
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.h-100 {
-  height: 100%;
-}
-
+// 页面特有样式（通用样式已提取到 page-common.scss）
 .sync-progress {
   padding: 16px;
   border-radius: 12px;
@@ -412,92 +431,9 @@ onBeforeUnmount(closeSSE)
   border: 1px solid rgba(var(--v-theme-primary), 0.12);
 }
 
-.sync-mode-group {
-  display: inline-flex;
-  border-radius: 6px;
-  overflow: hidden;
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  height: 36px;
-
-  .sync-mode-btn {
-    padding: 0 16px;
-    font-size: 0.875rem;
-    font-weight: 500;
-    cursor: pointer;
-    border: none;
-    background: transparent;
-    color: rgba(var(--v-theme-on-surface), 0.6);
-    transition: all 0.2s ease;
-    height: 100%;
-
-    &:not(:last-child) {
-      border-right: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-    }
-
-    // 增量选中 - 绿色
-    &.active:not(.warn) {
-      background: #10b981;
-      color: #fff;
-    }
-
-    // 全量选中 - 橙色
-    &.warn.active {
-      background: #f59e0b;
-      color: #fff;
-    }
-
-    &:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
-    &:not(.active):not(:disabled):hover {
-      background: rgba(var(--v-theme-on-surface), 0.08);
-    }
-  }
-}
-
-.ws-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  margin-right: 8px;
-  flex-shrink: 0;
-
-  &.online {
-    background: #10b981;
-    box-shadow: 0 0 6px #10b98180;
-  }
-
-  &.offline {
-    background: rgba(var(--v-theme-on-surface), 0.3);
-  }
-}
-
-// 移动端响应式适配
 @media (max-width: 599.98px) {
-  .stat-card-text {
-    padding: 12px !important;
-  }
-
-  .stat-number {
-    font-size: 1.25rem !important;
-  }
-
-  .stat-icon {
-    width: 40px;
-    height: 40px;
-  }
-
   .sync-progress {
     padding: 12px;
-  }
-}
-
-// 平板适配
-@media (min-width: 600px) and (max-width: 959.98px) {
-  .stat-number {
-    font-size: 1.5rem !important;
   }
 }
 </style>

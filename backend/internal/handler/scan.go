@@ -23,15 +23,17 @@ const defaultScanTimeout = 30 * time.Minute
 
 // ScanHandler 扫描处理器
 type ScanHandler struct {
-	DB          *gorm.DB
-	ScanService *service.ScanService
+	DB           *gorm.DB
+	ScanService  *service.ScanService
+	CacheService *service.CacheService
 }
 
 // NewScanHandler 创建扫描处理器
 func NewScanHandler(db *gorm.DB) *ScanHandler {
 	return &ScanHandler{
-		DB:          db,
-		ScanService: service.NewScanService(db),
+		DB:           db,
+		ScanService:  service.NewScanService(db),
+		CacheService: service.NewCacheService(db),
 	}
 }
 
@@ -51,6 +53,17 @@ func (h *ScanHandler) getEmbyClient() (*emby.Client, error) {
 		return nil, err
 	}
 	return emby.NewClient(config.Host, config.Port, config.APIKey), nil
+}
+
+// checkFreshness 检查缓存新鲜度，返回新鲜度结果（失败时返回 nil）
+func (h *ScanHandler) checkFreshness(c *gin.Context) *service.CacheFreshnessResult {
+	client, err := h.getEmbyClient()
+	if err != nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+	return h.CacheService.CheckCacheFreshness(ctx, client)
 }
 
 // getEmbyClientWithAuth 从数据库获取 Emby 配置并创建带用户认证的客户端
@@ -316,10 +329,15 @@ func (h *ScanHandler) AnalyzeScrapeAnomalies(c *gin.Context) {
 	}
 
 	log.Printf("%s", FormatAnalysisSummary("刮削异常", result))
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"message": "分析完成",
 		"data":    result,
-	})
+	}
+	// 检查缓存新鲜度
+	if freshness := h.checkFreshness(c); freshness != nil {
+		resp["cache_freshness"] = freshness
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // AnalyzeDuplicateMedia POST /api/analyze/duplicate-media - 基于缓存分析重复媒体
@@ -349,10 +367,14 @@ func (h *ScanHandler) AnalyzeDuplicateMedia(c *gin.Context) {
 	}
 
 	log.Printf("%s", FormatAnalysisSummary("重复媒体", result))
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"message": "分析完成",
 		"data":    result,
-	})
+	}
+	if freshness := h.checkFreshness(c); freshness != nil {
+		resp["cache_freshness"] = freshness
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // AnalyzeEpisodeMapping POST /api/analyze/episode-mapping - 基于缓存分析异常映射
@@ -412,11 +434,15 @@ func (h *ScanHandler) AnalyzeEpisodeMapping(c *gin.Context) {
 	log.Printf("✅ 异常映射分析完成: 共分析 %d 个条目, 发现 %d 个异常, %d 个错误",
 		result.TotalScanned, distinctCount, result.ErrorCount)
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "分析完成",
-		"data":    result,
+	resp := gin.H{
+		"message":            "分析完成",
+		"data":               result,
 		"anomaly_show_count": distinctCount,
-	})
+	}
+	if freshness := h.checkFreshness(c); freshness != nil {
+		resp["cache_freshness"] = freshness
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // CleanupDuplicateMedia POST /api/cleanup/duplicate-media - 批量清理重复媒体

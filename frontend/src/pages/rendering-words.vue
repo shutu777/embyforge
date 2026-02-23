@@ -429,18 +429,9 @@ onMounted(() => {
 
 <template>
   <div class="rendering-words-page">
-    <!-- 页面标题 -->
-    <div class="page-header mb-6">
-      <div class="d-flex align-center gap-3 mb-2">
-        <VIcon
-          icon="ri-code-s-slash-line"
-          size="32"
-          color="primary"
-        />
-        <h2 class="text-h4 font-weight-bold page-title">
-          {{ t('renderingWords.title') }}
-        </h2>
-      </div>
+    <!-- 页面标题和说明 -->
+    <div class="mb-6">
+      <h1 class="text-h4 font-weight-bold mb-2">{{ t('renderingWords.title') }}</h1>
       <div class="d-flex flex-wrap justify-space-between align-center gap-2">
         <p class="text-body-1 text-medium-emphasis mb-0">
           {{ t('renderingWords.description') }}
@@ -458,42 +449,39 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- 第一行：编辑剧集 + 剧集列表 -->
-    <VRow class="equal-height-row">
-      <!-- 左侧: 编辑剧集 -->
-      <VCol
-        cols="12"
-        md="6"
-        class="d-flex"
-      >
-        <VCard class="flex-grow-1" data-no-hover>
-          <VCardTitle class="pa-4">
-            <div class="d-flex justify-space-between align-center">
-              <div class="d-flex align-center gap-2">
-                <VIcon
-                  icon="ri-edit-box-line"
-                  color="primary"
-                />
-                <span>编辑剧集</span>
+    <!-- 第一行：编辑剧集 -->
+    <VCard variant="flat" class="content-card mb-7" data-no-hover>
+      <VCardText class="pa-5">
+        <div class="d-flex align-center justify-space-between mb-4">
+          <div class="d-flex align-center">
+            <VAvatar color="primary" variant="tonal" size="42" rounded="lg" class="me-3">
+              <VIcon icon="ri-edit-box-line" size="22" />
+            </VAvatar>
+            <div>
+              <div class="text-body-1 font-weight-semibold">编辑剧集</div>
+              <div class="text-body-2 text-medium-emphasis">
+                填写剧集信息和映射规则，生成渲染词映射指令
               </div>
-              <VBtn
-                color="primary"
-                prepend-icon="ri-download-line"
-                size="small"
-                @click="openImportDialog"
-              >
-                {{ t('renderingWords.importFromMapping') }}
-              </VBtn>
             </div>
-          </VCardTitle>
-          <VDivider />
-          <VCardText class="pa-4">
-            <VForm
-              ref="formRef"
-              v-model="formValid"
-              @submit.prevent="saveSeries"
-            >
-              <!-- 基本信息 -->
+          </div>
+          <VBtn
+            color="primary"
+            prepend-icon="ri-download-line"
+            size="small"
+            @click="openImportDialog"
+          >
+            {{ t('renderingWords.importFromMapping') }}
+          </VBtn>
+        </div>
+
+        <VForm
+          ref="formRef"
+          v-model="formValid"
+          @submit.prevent="saveSeries"
+        >
+          <!-- 基本信息 -->
+          <VRow>
+            <VCol cols="12" md="4">
               <VTextField
                 v-model="currentSeries.name"
                 :label="t('renderingWords.seriesName')"
@@ -501,356 +489,339 @@ onMounted(() => {
                 :rules="nameRules"
                 variant="outlined"
                 density="comfortable"
-                class="mb-3"
               />
+            </VCol>
+            <VCol cols="12" md="4">
+              <VTextField
+                v-model="currentSeries.tmdbId"
+                :label="t('renderingWords.tmdbId')"
+                :placeholder="t('renderingWords.tmdbIdPlaceholder')"
+                :rules="tmdbIdRules"
+                variant="outlined"
+                density="comfortable"
+                type="number"
+              />
+            </VCol>
+            <VCol cols="12" md="4">
+              <VSelect
+                v-model="currentSeries.type"
+                :label="t('renderingWords.type')"
+                :items="[
+                  { title: t('renderingWords.typeTv'), value: 'tv' },
+                  { title: t('renderingWords.typeMovie'), value: 'movie' }
+                ]"
+                variant="outlined"
+                density="comfortable"
+              />
+            </VCol>
+          </VRow>
 
-              <VRow>
-                <VCol
-                  cols="8"
-                >
-                  <VTextField
-                    v-model="currentSeries.tmdbId"
-                    :label="t('renderingWords.tmdbId')"
-                    :placeholder="t('renderingWords.tmdbIdPlaceholder')"
-                    :rules="tmdbIdRules"
-                    variant="outlined"
-                    density="comfortable"
-                    type="number"
-                  />
-                </VCol>
-                <VCol
-                  cols="4"
-                >
-                  <VSelect
-                    v-model="currentSeries.type"
-                    :label="t('renderingWords.type')"
-                    :items="[
-                      { title: t('renderingWords.typeTv'), value: 'tv' },
-                      { title: t('renderingWords.typeMovie'), value: 'movie' }
-                    ]"
-                    variant="outlined"
-                    density="comfortable"
-                  />
-                </VCol>
-              </VRow>
+          <VDivider class="my-4" />
 
-              <VDivider class="my-4" />
+          <!-- 映射规则 -->
+          <div class="d-flex justify-space-between align-center mb-3">
+            <span class="text-subtitle-2">{{ t('renderingWords.mappingRules') }}</span>
+            <div class="d-flex gap-2">
+              <VBtn
+                v-if="currentSeries.rules.length > 0"
+                size="small"
+                variant="text"
+                color="error"
+                @click="clearAllRules"
+              >
+                {{ t('renderingWords.clearAll') }}
+              </VBtn>
+              <VBtn
+                size="small"
+                color="primary"
+                prepend-icon="ri-add-line"
+                @click="addRule"
+              >
+                {{ t('renderingWords.addRule') }}
+              </VBtn>
+            </div>
+          </div>
 
-              <!-- 映射规则 -->
-              <div class="d-flex justify-space-between align-center mb-3">
-                <span class="text-subtitle-2">{{ t('renderingWords.mappingRules') }}</span>
-                <div class="d-flex gap-2">
-                  <VBtn
-                    v-if="currentSeries.rules.length > 0"
+          <!-- 规则列表 -->
+          <div
+            v-if="currentSeries.rules.length === 0"
+            class="text-center py-6 text-medium-emphasis"
+          >
+            <VIcon
+              icon="ri-file-list-3-line"
+              size="40"
+              class="mb-2"
+            />
+            <p class="text-caption">暂无规则</p>
+          </div>
+
+          <TransitionGroup name="list">
+            <VCard
+              v-for="(rule, index) in currentSeries.rules"
+              :key="rule.id"
+              variant="outlined"
+              class="mb-2 rule-card"
+            >
+              <VCardText class="pa-3">
+                <div class="d-flex justify-space-between align-center mb-2">
+                  <VChip
                     size="small"
+                    color="primary"
+                    variant="tonal"
+                  >
+                    {{ index + 1 }}
+                  </VChip>
+                  <VBtn
+                    icon="ri-delete-bin-line"
+                    size="x-small"
                     variant="text"
                     color="error"
-                    @click="clearAllRules"
-                  >
-                    {{ t('renderingWords.clearAll') }}
-                  </VBtn>
+                    @click="deleteRule(rule.id)"
+                  />
+                </div>
+
+                <VRow dense>
+                  <VCol cols="6" sm="3">
+                    <VTextField
+                      v-model="rule.sourceSeason"
+                      :label="t('renderingWords.sourceSeason')"
+                      variant="outlined"
+                      density="compact"
+                      type="number"
+                      hide-details
+                    />
+                  </VCol>
+                  <VCol cols="6" sm="3">
+                    <VTextField
+                      v-model="rule.sourceEpisodes"
+                      :label="t('renderingWords.sourceEpisodes')"
+                      :placeholder="t('renderingWords.sourceEpisodesPlaceholder')"
+                      variant="outlined"
+                      density="compact"
+                      hide-details
+                    />
+                  </VCol>
+                  <VCol cols="6" sm="3">
+                    <VTextField
+                      v-model="rule.targetSeason"
+                      :label="t('renderingWords.targetSeason')"
+                      variant="outlined"
+                      density="compact"
+                      type="number"
+                      hide-details
+                    />
+                  </VCol>
+                  <VCol cols="6" sm="3">
+                    <VTextField
+                      v-model="rule.offset"
+                      :label="t('renderingWords.offset')"
+                      :placeholder="t('renderingWords.offsetPlaceholder')"
+                      variant="outlined"
+                      density="compact"
+                      hide-details
+                    />
+                  </VCol>
+                </VRow>
+
+                <div class="mt-2">
                   <VBtn
-                    size="small"
-                    color="primary"
-                    prepend-icon="ri-add-line"
-                    @click="addRule"
+                    size="x-small"
+                    variant="text"
+                    prepend-icon="ri-file-copy-line"
+                    @click="copyRule(rule)"
                   >
-                    {{ t('renderingWords.addRule') }}
+                    {{ t('renderingWords.copyLine') }}
                   </VBtn>
                 </div>
-              </div>
+              </VCardText>
+            </VCard>
+          </TransitionGroup>
 
-              <!-- 规则列表 -->
-              <div
-                v-if="currentSeries.rules.length === 0"
-                class="text-center py-6 text-medium-emphasis"
-              >
-                <VIcon
-                  icon="ri-file-list-3-line"
-                  size="40"
-                  class="mb-2"
-                />
-                <p class="text-caption">暂无规则</p>
-              </div>
+          <!-- 操作按钮 -->
+          <div class="d-flex gap-2 mt-3">
+            <VBtn
+              type="submit"
+              color="primary"
+            >
+              <VIcon icon="ri-save-line" class="me-1" />
+              {{ currentSeries.id ? '更新' : '保存' }}
+            </VBtn>
+            <VBtn
+              color="secondary"
+              variant="tonal"
+              @click="resetForm"
+            >
+              重置
+            </VBtn>
+          </div>
+        </VForm>
+      </VCardText>
+    </VCard>
 
-              <TransitionGroup name="list">
-                <VCard
-                  v-for="(rule, index) in currentSeries.rules"
-                  :key="rule.id"
-                  variant="outlined"
-                  class="mb-2 rule-card"
-                >
-                  <VCardText class="pa-3">
-                    <div class="d-flex justify-space-between align-center mb-2">
-                      <VChip
-                        size="small"
-                        color="primary"
-                        variant="tonal"
-                      >
-                        {{ index + 1 }}
-                      </VChip>
-                      <VBtn
-                        icon="ri-delete-bin-line"
-                        size="x-small"
-                        variant="text"
-                        color="error"
-                        @click="deleteRule(rule.id)"
-                      />
-                    </div>
-
-                    <VRow dense>
-                      <VCol cols="6" sm="3">
-                        <VTextField
-                          v-model="rule.sourceSeason"
-                          :label="t('renderingWords.sourceSeason')"
-                          variant="outlined"
-                          density="compact"
-                          type="number"
-                          hide-details
-                        />
-                      </VCol>
-                      <VCol cols="6" sm="3">
-                        <VTextField
-                          v-model="rule.sourceEpisodes"
-                          :label="t('renderingWords.sourceEpisodes')"
-                          :placeholder="t('renderingWords.sourceEpisodesPlaceholder')"
-                          variant="outlined"
-                          density="compact"
-                          hide-details
-                        />
-                      </VCol>
-                      <VCol cols="6" sm="3">
-                        <VTextField
-                          v-model="rule.targetSeason"
-                          :label="t('renderingWords.targetSeason')"
-                          variant="outlined"
-                          density="compact"
-                          type="number"
-                          hide-details
-                        />
-                      </VCol>
-                      <VCol cols="6" sm="3">
-                        <VTextField
-                          v-model="rule.offset"
-                          :label="t('renderingWords.offset')"
-                          :placeholder="t('renderingWords.offsetPlaceholder')"
-                          variant="outlined"
-                          density="compact"
-                          hide-details
-                        />
-                      </VCol>
-                    </VRow>
-
-                    <div class="mt-2">
-                      <VBtn
-                        size="x-small"
-                        variant="text"
-                        prepend-icon="ri-file-copy-line"
-                        @click="copyRule(rule)"
-                      >
-                        {{ t('renderingWords.copyLine') }}
-                      </VBtn>
-                    </div>
-                  </VCardText>
-                </VCard>
-              </TransitionGroup>
-
-              <!-- 操作按钮 -->
-              <VRow dense class="mt-3">
-                <VCol cols="6">
-                  <VBtn
-                    type="submit"
-                    color="primary"
-                    block
-                    size="large"
-                  >
-                    {{ currentSeries.id ? '更新' : '保存' }}
-                  </VBtn>
-                </VCol>
-                <VCol cols="6">
-                  <VBtn
-                    color="secondary"
-                    block
-                    size="large"
-                    @click="resetForm"
-                  >
-                    重置
-                  </VBtn>
-                </VCol>
-              </VRow>
-            </VForm>
-          </VCardText>
-        </VCard>
-      </VCol>
-
-      <!-- 右侧: 剧集列表 -->
-      <VCol
-        cols="12"
-        md="6"
-        class="d-flex"
-      >
-        <VCard class="flex-grow-1" data-no-hover>
-          <VCardTitle class="pa-4">
-            <div class="d-flex justify-space-between align-center">
-              <div class="d-flex align-center gap-2">
-                <VIcon
-                  icon="ri-tv-line"
-                  color="primary"
-                />
-                <span>{{ t('renderingWords.seriesList') }}</span>
+    <!-- 第二行：剧集列表 -->
+    <VCard variant="flat" class="content-card mb-7" data-no-hover>
+      <VCardText class="pa-5">
+        <div class="d-flex align-center justify-space-between mb-4">
+          <div class="d-flex align-center">
+            <VAvatar color="info" variant="tonal" size="42" rounded="lg" class="me-3">
+              <VIcon icon="ri-tv-line" size="22" />
+            </VAvatar>
+            <div>
+              <div class="text-body-1 font-weight-semibold">
+                {{ t('renderingWords.seriesList') }}
                 <VChip
                   v-if="seriesList.length > 0"
-                  size="small"
+                  size="x-small"
                   color="primary"
                   variant="tonal"
+                  class="ms-2"
                 >
                   {{ seriesList.length }}
                 </VChip>
               </div>
-              <VBtn
-                v-if="seriesList.length > 0"
-                size="small"
-                color="success"
-                prepend-icon="ri-download-line"
-                @click="exportFile"
-              >
-                {{ t('renderingWords.exportFile') }}
-              </VBtn>
-            </div>
-          </VCardTitle>
-          <VDivider />
-          <VCardText class="pa-4">
-            <!-- 批量操作 -->
-            <div
-              v-if="seriesList.length > 0"
-              class="d-flex justify-space-between align-center pa-3 mb-3 rounded batch-actions-bar"
-            >
-              <div class="d-flex align-center gap-2">
-                <VCheckbox
-                  v-model="allSelected"
-                  hide-details
-                  density="compact"
-                />
-                <span class="text-body-2">
-                  {{ selectedSeries.length > 0 ? `已选 ${selectedSeries.length}` : '全选' }}
-                </span>
-              </div>
-              <div v-if="selectedSeries.length > 0" class="d-flex gap-2">
-                <VBtn
-                  size="small"
-                  color="error"
-                  prepend-icon="ri-delete-bin-line"
-                  @click="batchDelete"
-                >
-                  删除
-                </VBtn>
+              <div class="text-body-2 text-medium-emphasis">
+                已保存的剧集映射配置，支持批量操作和导出
               </div>
             </div>
+          </div>
+          <VBtn
+            v-if="seriesList.length > 0"
+            size="small"
+            color="success"
+            prepend-icon="ri-download-line"
+            @click="exportFile"
+          >
+            {{ t('renderingWords.exportFile') }}
+          </VBtn>
+        </div>
 
-            <!-- 列表 -->
-            <div
-              v-if="seriesList.length === 0"
-              class="empty-series-container"
+        <!-- 批量操作 -->
+        <div
+          v-if="seriesList.length > 0"
+          class="d-flex justify-space-between align-center pa-3 mb-3 rounded batch-actions-bar"
+        >
+          <div class="d-flex align-center gap-2">
+            <VCheckbox
+              v-model="allSelected"
+              hide-details
+              density="compact"
+            />
+            <span class="text-body-2">
+              {{ selectedSeries.length > 0 ? `已选 ${selectedSeries.length}` : '全选' }}
+            </span>
+          </div>
+          <div v-if="selectedSeries.length > 0" class="d-flex gap-2">
+            <VBtn
+              size="small"
+              color="error"
+              prepend-icon="ri-delete-bin-line"
+              @click="batchDelete"
             >
-              <VIcon
-                icon="ri-tv-line"
-                size="40"
+              删除
+            </VBtn>
+          </div>
+        </div>
+
+        <!-- 列表 -->
+        <div
+          v-if="seriesList.length === 0"
+          class="empty-series-container"
+        >
+          <VIcon
+            icon="ri-tv-line"
+            size="40"
+          />
+          <p class="text-caption mb-0">{{ t('renderingWords.noSeries') }}</p>
+        </div>
+
+        <TransitionGroup name="list">
+          <VCard
+            v-for="series in seriesList"
+            :key="series.id"
+            variant="outlined"
+            class="mb-2 series-item"
+          >
+            <VCardText class="d-flex align-center pa-3">
+              <VCheckbox
+                v-model="selectedSeries"
+                :value="series.id"
+                hide-details
+                density="compact"
+                class="me-2"
               />
-              <p class="text-caption mb-0">{{ t('renderingWords.noSeries') }}</p>
-            </div>
-
-            <TransitionGroup name="list">
-              <VCard
-                v-for="series in seriesList"
-                :key="series.id"
-                variant="outlined"
-                class="mb-2 series-item"
-              >
-                <VCardText class="d-flex align-center pa-3">
-                  <VCheckbox
-                    v-model="selectedSeries"
-                    :value="series.id"
-                    hide-details
-                    density="compact"
-                    class="me-2"
-                  />
-                  <div class="flex-grow-1">
-                    <div class="text-body-2 mb-1">{{ series.name }}</div>
-                    <div class="d-flex gap-1">
-                      <VChip size="x-small" variant="tonal">
-                        {{ series.tmdbId }}
-                      </VChip>
-                      <VChip size="x-small" color="secondary" variant="tonal">
-                        {{ series.rules.length }} 规则
-                      </VChip>
-                    </div>
-                  </div>
-                  <div class="d-flex gap-1">
-                    <VBtn
-                      icon="ri-file-copy-line"
-                      size="x-small"
-                      variant="text"
-                      @click="copySeriesConfig(series)"
-                    />
-                    <VBtn
-                      icon="ri-edit-line"
-                      size="x-small"
-                      variant="text"
-                      @click="editSeries(series)"
-                    />
-                    <VBtn
-                      icon="ri-delete-bin-line"
-                      size="x-small"
-                      variant="text"
-                      color="error"
-                      @click="deleteSeries(series.id)"
-                    />
-                  </div>
-                </VCardText>
-              </VCard>
-            </TransitionGroup>
-          </VCardText>
-        </VCard>
-      </VCol>
-    </VRow>
-
-    <!-- 第二行：预览 -->
-    <VRow class="mt-3">
-      <VCol cols="12">
-        <VCard data-no-hover>
-          <VCardTitle class="pa-4">
-            <div class="d-flex justify-space-between align-center">
-              <div class="d-flex align-center gap-2">
-                <VIcon
-                  icon="ri-eye-line"
-                  color="primary"
+              <div class="flex-grow-1">
+                <div class="text-body-2 mb-1">{{ series.name }}</div>
+                <div class="d-flex gap-1">
+                  <VChip size="x-small" variant="tonal">
+                    {{ series.tmdbId }}
+                  </VChip>
+                  <VChip size="x-small" color="secondary" variant="tonal">
+                    {{ series.rules.length }} 规则
+                  </VChip>
+                </div>
+              </div>
+              <div class="d-flex gap-1">
+                <VBtn
+                  icon="ri-file-copy-line"
+                  size="x-small"
+                  variant="text"
+                  @click="copySeriesConfig(series)"
                 />
-                <span>{{ t('renderingWords.preview') }}</span>
+                <VBtn
+                  icon="ri-edit-line"
+                  size="x-small"
+                  variant="text"
+                  @click="editSeries(series)"
+                />
+                <VBtn
+                  icon="ri-delete-bin-line"
+                  size="x-small"
+                  variant="text"
+                  color="error"
+                  @click="deleteSeries(series.id)"
+                />
               </div>
-              <VBtn
-                size="small"
-                color="primary"
-                prepend-icon="ri-file-copy-line"
-                @click="copyAll"
-                :disabled="!previewText"
-              >
-                {{ t('renderingWords.copyAll') }}
-              </VBtn>
-            </div>
-          </VCardTitle>
-          <VDivider />
-          <VCardText class="pa-0">
-            <div class="preview-container">
-              <pre v-if="previewText" class="preview-text">{{ previewText }}</pre>
-              <div v-else class="preview-empty">
-                <VIcon icon="ri-code-s-slash-line" size="40" class="mb-2" />
-                <p class="text-caption text-medium-emphasis">填写表单后将在此处显示预览</p>
+            </VCardText>
+          </VCard>
+        </TransitionGroup>
+      </VCardText>
+    </VCard>
+
+    <!-- 第三行：预览 -->
+    <VCard variant="flat" class="content-card" data-no-hover>
+      <VCardText class="pa-5">
+        <div class="d-flex align-center justify-space-between mb-4">
+          <div class="d-flex align-center">
+            <VAvatar color="success" variant="tonal" size="42" rounded="lg" class="me-3">
+              <VIcon icon="ri-eye-line" size="22" />
+            </VAvatar>
+            <div>
+              <div class="text-body-1 font-weight-semibold">{{ t('renderingWords.preview') }}</div>
+              <div class="text-body-2 text-medium-emphasis">
+                生成的渲染词映射指令预览，可直接复制使用
               </div>
             </div>
-          </VCardText>
-        </VCard>
-      </VCol>
-    </VRow>
+          </div>
+          <VBtn
+            size="small"
+            color="primary"
+            prepend-icon="ri-file-copy-line"
+            @click="copyAll"
+            :disabled="!previewText"
+          >
+            {{ t('renderingWords.copyAll') }}
+          </VBtn>
+        </div>
+
+        <div class="preview-container">
+          <pre v-if="previewText" class="preview-text">{{ previewText }}</pre>
+          <div v-else class="preview-empty">
+            <VIcon icon="ri-code-s-slash-line" size="40" class="mb-2" />
+            <p class="text-caption text-medium-emphasis">填写表单后将在此处显示预览</p>
+          </div>
+        </div>
+      </VCardText>
+    </VCard>
 
     <!-- 导入对话框 -->
     <VDialog
@@ -1005,25 +976,6 @@ onMounted(() => {
 </template>
 
 <style scoped>
-/* 强制禁用三个主卡片的 hover 效果 - 使用最高优先级 */
-:deep(.v-card[data-no-hover]) {
-  transition: none !important;
-  transform: none !important;
-  will-change: auto !important;
-  cursor: default !important;
-}
-
-:deep(.v-card[data-no-hover]:hover) {
-  transition: none !important;
-  transform: none !important;
-  box-shadow: 0px 2px 1px -1px var(--v-shadow-key-umbra-opacity, rgba(0, 0, 0, 0.2)), 0px 1px 1px 0px var(--v-shadow-key-penumbra-opacity, rgba(0, 0, 0, 0.14)), 0px 1px 3px 0px var(--v-shadow-key-ambient-opacity, rgba(0, 0, 0, 0.12)) !important;
-  z-index: auto !important;
-}
-
-:deep(.v-card[data-no-hover]::before) {
-  display: none !important;
-}
-
 /* 列表动画 */
 .list-enter-active,
 .list-leave-active {
@@ -1040,21 +992,6 @@ onMounted(() => {
   transform: translateX(10px);
 }
 
-/* 规则卡片 */
-.rule-card {
-  /* 移除 hover 效果 */
-}
-
-/* 剧集列表项 */
-.series-item {
-  /* 移除 hover 效果 */
-}
-
-/* 导入项 */
-.import-item {
-  /* 移除 hover 效果 */
-}
-
 /* 批量操作栏 - 使用 primary 颜色 */
 .batch-actions-bar {
   background-color: rgba(var(--v-theme-primary), 0.08);
@@ -1067,8 +1004,9 @@ onMounted(() => {
   max-height: 400px;
   overflow: auto;
   padding: 16px;
-  background-color: rgb(var(--v-theme-surface));
-  border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  background-color: rgba(var(--v-theme-on-surface), 0.02);
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  border-radius: 8px;
 }
 
 .preview-text {
@@ -1128,28 +1066,8 @@ onMounted(() => {
   border-radius: 4px;
 }
 
-/* 等高容器 */
-.equal-height-row {
-  display: flex;
-  flex-wrap: wrap;
-}
-
-.equal-height-row > .v-col {
-  display: flex;
-}
-
-.equal-height-row .v-card {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
 /* 移动端响应式适配 */
 @media (max-width: 599px) {
-  .page-title {
-    font-size: 1.25rem !important;
-  }
-
   .preview-container {
     min-height: 150px;
     max-height: 300px;

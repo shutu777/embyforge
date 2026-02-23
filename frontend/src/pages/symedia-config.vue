@@ -273,7 +273,7 @@ onMounted(async () => {
 
     <template v-else>
       <!-- 第一个卡片：手动配置刷新 -->
-      <VCard class="dash-card mb-6" data-no-hover>
+      <VCard variant="flat" class="content-card mb-7" data-no-hover>
         <VCardText class="pa-6">
           <div class="d-flex align-center mb-5">
             <VAvatar color="primary" variant="tonal" size="42" rounded="lg" class="me-3">
@@ -349,7 +349,7 @@ onMounted(async () => {
       </VCard>
 
       <!-- 第二个卡片：GitHub 自动监听 -->
-      <VCard class="dash-card" data-no-hover>
+      <VCard variant="flat" class="content-card" data-no-hover>
         <VCardText class="pa-6">
           <div class="d-flex align-center mb-5">
             <VAvatar color="success" variant="tonal" size="42" rounded="lg" class="me-3">
@@ -468,7 +468,7 @@ onMounted(async () => {
 
             <!-- 生成的 Webhook URL -->
             <VCol v-if="webhookUrl" cols="12">
-              <VCard variant="tonal" color="success">
+              <VCard variant="tonal" color="success" data-no-hover>
                 <VCardText class="pa-4">
                   <div class="text-body-2 font-weight-semibold mb-2">
                     <VIcon icon="ri-check-line" size="18" class="me-1" />
@@ -503,13 +503,5 @@ onMounted(async () => {
 </template>
 
 <style lang="scss" scoped>
-.dash-card {
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-
-  &:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-  }
-}
+// 页面特有样式（通用样式已提取到 page-common.scss）
 </style>

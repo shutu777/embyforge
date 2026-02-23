@@ -23,6 +23,9 @@ const analyzing = ref(false)
 const loading = ref(false)
 const analyzeResult = ref(null)
 
+// 缓存新鲜度
+const cacheFreshness = ref(null)
+
 // 清理状态
 const cleaning = ref(false)
 const cleanResult = ref(null)
@@ -151,6 +154,7 @@ async function startAnalyze() {
   try {
     const { data } = await api.post('/analyze/scrape-anomaly')
     analyzeResult.value = data.data
+    cacheFreshness.value = data.cache_freshness || null
     page.value = 1
     await Promise.all([fetchAnomalies(), fetchAnalysisStatus()])
   } catch (e) {
@@ -296,6 +300,14 @@ onMounted(async () => {
 
 <template>
   <div class="scrape-anomaly-page">
+    <!-- 页面标题和说明 -->
+    <div class="mb-6">
+      <h1 class="text-h4 font-weight-bold mb-2">刮削异常检测</h1>
+      <p class="text-body-1 text-medium-emphasis">
+        检测媒体库中缺少封面图片或外部 ID（TMDB/IMDB）的条目，支持批量查找封面和清理
+      </p>
+    </div>
+
     <!-- 加载中 -->
     <div v-if="loadingStatus" class="d-flex justify-center align-center" style="min-height: 300px;">
       <VProgressCircular indeterminate color="primary" size="48" />
@@ -310,14 +322,21 @@ onMounted(async () => {
       </VAlert>
 
       <template v-else>
+        <!-- 缓存新鲜度警告 -->
+        <VAlert v-if="cacheFreshness && cacheFreshness.is_stale" type="warning" variant="tonal" class="mb-4">
+          本地缓存数据可能已过期（本地 {{ cacheFreshness.local_count?.toLocaleString() }} 条，Emby {{ cacheFreshness.emby_count?.toLocaleString() }} 条），分析结果可能不准确。请先前往
+          <RouterLink to="/media-scan">扫描媒体</RouterLink>
+          页面执行全量同步。
+        </VAlert>
+
         <!-- 统计卡片 -->
-        <VRow class="mb-4">
+        <VRow class="mb-4 match-height">
           <VCol cols="6" sm="4">
-            <VCard class="stat-card stat-card-responsive">
+            <VCard class="stat-card">
               <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
                 <div class="stat-text-wrap">
                   <div class="text-body-2 text-medium-emphasis mb-1">异常数量</div>
-                  <div class="text-h4 font-weight-bold stat-number">
+                  <div class="font-weight-bold stat-number">
                     {{ anomalyCount.toLocaleString() }}
                   </div>
                 </div>
@@ -328,11 +347,11 @@ onMounted(async () => {
             </VCard>
           </VCol>
           <VCol cols="6" sm="4">
-            <VCard class="stat-card stat-card-responsive">
+            <VCard class="stat-card">
               <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
                 <div class="stat-text-wrap">
                   <div class="text-body-2 text-medium-emphasis mb-1">缓存条目</div>
-                  <div class="text-h4 font-weight-bold stat-number">
+                  <div class="font-weight-bold stat-number">
                     {{ cacheStatus.total_items.toLocaleString() }}
                   </div>
                 </div>
@@ -343,11 +362,11 @@ onMounted(async () => {
             </VCard>
           </VCol>
           <VCol cols="12" sm="4">
-            <VCard class="stat-card stat-card-responsive">
+            <VCard class="stat-card">
               <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
                 <div class="stat-text-wrap">
                   <div class="text-body-2 text-medium-emphasis mb-1">最后分析</div>
-                  <div class="text-h6 font-weight-bold">
+                  <div class="font-weight-bold stat-number">
                     {{ formatTime(lastAnalyzedAt) }}
                   </div>
                 </div>
@@ -360,7 +379,7 @@ onMounted(async () => {
         </VRow>
 
         <!-- 操作区域 -->
-        <VCard variant="flat" class="content-card mb-6" data-no-hover>
+        <VCard variant="flat" class="content-card mb-7" data-no-hover>
           <VCardText class="pa-5">
             <div class="d-flex align-center mb-4">
               <VAvatar color="primary" variant="tonal" size="42" rounded="lg" class="me-3">
@@ -837,116 +856,7 @@ onMounted(async () => {
 </template>
 
 <style lang="scss" scoped>
-.stat-card {
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-}
-
-.stat-card-responsive {
-  height: 120px;
-}
-
-.stat-text-wrap {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-}
-
-.content-card {
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  transform: none !important;
-  box-shadow: none !important;
-}
-
-.stat-icon {
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  margin-inline-start: 8px;
-}
-
-.h-100 {
-  height: 100%;
-}
-
-.clean-dialog-card {
-  border-radius: 12px !important;
-}
-
-.clean-toolbar {
-  background: rgba(var(--v-theme-on-surface), 0.02);
-}
-
-.preview-items {
-  .preview-item {
-    border-block-end: 1px solid rgba(var(--v-border-color), 0.06);
-
-    &.item-selected {
-      background: rgba(var(--v-theme-error), 0.06);
-    }
-
-    &:last-child {
-      border-block-end: none;
-    }
-  }
-}
-
-.table-responsive {
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-}
-
-.mobile-items {
-  .mobile-item {
-    border-block-end: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-
-    &:last-child {
-      border-block-end: none;
-    }
-  }
-}
-
-// 移动端响应式适配
-@media (max-width: 599.98px) {
-  .stat-card-responsive {
-    height: auto;
-    min-height: 90px;
-  }
-
-  .stat-card-text {
-    padding: 10px !important;
-  }
-
-  .stat-number {
-    font-size: 1.15rem !important;
-  }
-
-  .stat-icon {
-    width: 32px;
-    height: 32px;
-    border-radius: 8px;
-    margin-inline-start: 4px;
-
-    .v-icon {
-      font-size: 16px !important;
-    }
-  }
-
-  .action-buttons .v-btn {
-    flex: 1 1 auto;
-    min-width: 0;
-  }
-}
-
-// 平板适配
-@media (min-width: 600px) and (max-width: 959.98px) {
-  .stat-number {
-    font-size: 1.5rem !important;
-  }
-}
+// 页面特有样式（通用样式已提取到 page-common.scss）
 </style>
 
 <style lang="scss">

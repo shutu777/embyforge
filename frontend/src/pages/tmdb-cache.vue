@@ -117,14 +117,22 @@ onMounted(async () => { await Promise.all([fetchList(), fetchCacheStatus()]) })
 
 <template>
   <div>
+    <!-- 页面标题和说明 -->
+    <div class="mb-6">
+      <h1 class="text-h4 font-weight-bold mb-2">TMDB 缓存管理</h1>
+      <p class="text-body-1 text-medium-emphasis">
+        查看和管理本地缓存的 TMDB 元数据，用于加速刮削异常检测和封面查找
+      </p>
+    </div>
+
     <!-- 统计卡片 -->
-    <VRow class="mb-4">
-      <VCol cols="12" sm="4">
-        <VCard class="stat-card" style="height: 120px;">
-          <VCardText class="d-flex align-center justify-space-between h-100 pa-5">
-            <div>
+    <VRow class="mb-4 match-height">
+      <VCol cols="6" sm="4">
+        <VCard class="stat-card">
+          <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
+            <div class="stat-text-wrap">
               <div class="text-body-2 text-medium-emphasis mb-1">缓存节目数</div>
-              <div class="text-h4 font-weight-bold">{{ totalShows.toLocaleString() }}</div>
+              <div class="font-weight-bold stat-number">{{ totalShows.toLocaleString() }}</div>
             </div>
             <div class="stat-icon" style="background: #6366f118;">
               <VIcon icon="ri-movie-2-fill" color="#6366f1" size="24" />
@@ -132,12 +140,12 @@ onMounted(async () => { await Promise.all([fetchList(), fetchCacheStatus()]) })
           </VCardText>
         </VCard>
       </VCol>
-      <VCol cols="12" sm="4">
-        <VCard class="stat-card" style="height: 120px;">
-          <VCardText class="d-flex align-center justify-space-between h-100 pa-5">
-            <div>
+      <VCol cols="6" sm="4">
+        <VCard class="stat-card">
+          <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
+            <div class="stat-text-wrap">
               <div class="text-body-2 text-medium-emphasis mb-1">缓存记录数</div>
-              <div class="text-h4 font-weight-bold">{{ totalRecords.toLocaleString() }}</div>
+              <div class="font-weight-bold stat-number">{{ totalRecords.toLocaleString() }}</div>
             </div>
             <div class="stat-icon" style="background: #8b5cf618;">
               <VIcon icon="ri-database-2-fill" color="#8b5cf6" size="24" />
@@ -146,7 +154,7 @@ onMounted(async () => { await Promise.all([fetchList(), fetchCacheStatus()]) })
         </VCard>
       </VCol>
       <VCol cols="12" sm="4">
-        <VCard class="stat-card d-flex align-center justify-center" style="height: 120px;">
+        <VCard class="stat-card d-flex align-center justify-center">
           <VBtn color="error" variant="tonal" :disabled="totalRecords === 0" @click="clearDialog = true">
             <VIcon icon="ri-delete-bin-line" class="me-1" />
             清空全部缓存
@@ -320,77 +328,14 @@ onMounted(async () => { await Promise.all([fetchList(), fetchCacheStatus()]) })
 </template>
 
 <style lang="scss" scoped>
-.stat-card {
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-}
-
-.content-card {
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  transform: none !important;
-  box-shadow: none !important;
-}
-
-.stat-icon {
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  margin-inline-start: 8px;
-}
-
-.h-100 {
-  height: 100%;
-}
-
-.mobile-items {
-  .mobile-item {
-    border-block-end: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-
-    &:last-child {
-      border-block-end: none;
-    }
-  }
-}
-
-.table-responsive {
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-}
+// 页面特有样式（通用样式已提取到 page-common.scss）
 
 .tmdb-cache-time {
   word-break: break-word;
   line-height: 1.3;
 }
 
-.panel-title-content {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1;
-  min-width: 0;
-
-  .panel-title-name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-}
-
 @media (max-width: 599.98px) {
-  .panel-title-content {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 4px;
-
-    .panel-title-name {
-      white-space: normal;
-      word-break: break-all;
-    }
-  }
-
   .action-links {
     justify-content: flex-start !important;
     margin-bottom: 4px !important;

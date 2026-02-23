@@ -12,7 +12,8 @@ import (
 
 // SystemConfigHandler 系统配置处理器
 type SystemConfigHandler struct {
-	DB *gorm.DB
+	DB             *gorm.DB
+	OnConfigUpdate func(key, value string) // 配置更新回调
 }
 
 // NewSystemConfigHandler 创建系统配置处理器
@@ -71,5 +72,11 @@ func (h *SystemConfigHandler) UpdateConfig(c *gin.Context) {
 	}
 
 	log.Printf("⚙️ 系统配置已更新: %s", key)
+
+	// 通知配置更新回调
+	if h.OnConfigUpdate != nil {
+		h.OnConfigUpdate(key, req.Value)
+	}
+
 	c.JSON(http.StatusOK, gin.H{"data": config, "message": "配置更新成功"})
 }
