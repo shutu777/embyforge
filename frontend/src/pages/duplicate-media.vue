@@ -37,6 +37,17 @@ const embyConfig = ref(null)
 // 是否有缓存数据
 const hasCache = computed(() => cacheStatus.value && cacheStatus.value.total_items > 0)
 
+// 最后同步时间
+const lastSyncAt = computed(() => cacheStatus.value?.last_sync_at || null)
+
+// 缓存是否过期（超过 10 分钟未同步视为过期）
+const isCacheStale = computed(() => {
+  if (!lastSyncAt.value) return true
+  const syncTime = new Date(lastSyncAt.value)
+  const now = new Date()
+  return (now - syncTime) > 10 * 60 * 1000
+})
+
 // Emby 基础 URL
 const embyBaseUrl = computed(() => {
   if (!embyConfig.value) return ''
@@ -340,6 +351,20 @@ onMounted(async () => {
                 </div>
               </div>
             </div>
+
+            <VAlert :type="isCacheStale ? 'warning' : 'info'" variant="tonal" class="mb-4">
+              <span>
+                为确保检测结果准确，请先前往
+                <RouterLink to="/media-scan" class="text-primary font-weight-medium">扫描媒体</RouterLink>
+                页面执行一次增量同步或全量同步，保证缓存与 Emby 媒体库信息一致。
+                <template v-if="lastSyncAt">
+                  （上次同步：{{ formatTime(lastSyncAt) }}）
+                </template>
+                <template v-else>
+                  （尚未同步过）
+                </template>
+              </span>
+            </VAlert>
 
             <div class="d-flex flex-wrap gap-3 action-buttons">
               <VBtn

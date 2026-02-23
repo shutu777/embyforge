@@ -291,7 +291,7 @@ const anomalyChartSeries = computed(() => [{
               <div v-else class="text-center text-medium-emphasis py-8">
                 <VIcon icon="ri-play-circle-line" size="32" class="mb-2 d-block mx-auto" />
                 <div class="text-body-2 mb-1">暂无播放记录</div>
-                <div class="text-caption">请在 Emby 中安装 Playback Reporting 插件以启用播放记录</div>
+                <div class="text-caption">Emby 暂无播放活动，播放媒体后将自动显示</div>
               </div>
             </VCardText>
           </VCard>

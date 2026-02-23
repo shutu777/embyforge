@@ -1,6 +1,7 @@
 package emby
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -34,6 +35,7 @@ type MediaItem struct {
 	ChildCount          int               `json:"ChildCount"`          // 子条目数量（季的集数）
 	RecursiveItemCount  int               `json:"RecursiveItemCount"`  // 递归子条目数量
 	ProductionYear      int               `json:"ProductionYear"`      // 制作年份
+	DateLastSaved       string            `json:"DateLastSaved"`       // Emby 最后保存时间（ISO 8601）
 }
 
 // MediaItemsResponse Emby Items 接口响应
@@ -51,11 +53,22 @@ func (m *MediaItem) EffectiveChildCount() int {
 	return m.RecursiveItemCount
 }
 
+// AuthenticationResult Emby 用户认证响应
+type AuthenticationResult struct {
+	AccessToken string `json:"AccessToken"`
+	ServerID    string `json:"ServerId"`
+	User        struct {
+		ID   string `json:"Id"`
+		Name string `json:"Name"`
+	} `json:"User"`
+}
+
 // Client Emby API 客户端
 type Client struct {
 	Host       string
 	Port       int
 	APIKey     string
+	UserToken  string // 用户认证 token，用于删除等需要用户权限的操作
 	HTTPClient *http.Client
 }
 
@@ -69,6 +82,61 @@ func NewClient(host string, port int, apiKey string) *Client {
 			Timeout: 30 * time.Minute,
 		},
 	}
+}
+
+// AuthenticateByName 使用用户名密码认证，获取用户 AccessToken
+// POST /emby/Users/AuthenticateByName
+func (c *Client) AuthenticateByName(ctx context.Context, username, password string) (*AuthenticationResult, error) {
+	reqURL := fmt.Sprintf("%s/emby/Users/AuthenticateByName", c.baseURL())
+
+	body, err := json.Marshal(map[string]string{
+		"Username": username,
+		"Pw":       password,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("序列化认证请求失败: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("创建认证请求失败: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	// Emby 认证需要 Authorization header
+	req.Header.Set("X-Emby-Authorization", `Emby Client="EmbyForge", Device="Server", DeviceId="embyforge", Version="1.0.0"`)
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("认证请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取认证响应失败: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Emby 用户认证失败，状态码 %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result AuthenticationResult
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("解析认证响应失败: %w", err)
+	}
+
+	c.UserToken = result.AccessToken
+	log.Printf("🔑 Emby 用户认证成功: %s", result.User.Name)
+	return &result, nil
+}
+
+// getDeleteToken 获取用于删除操作的 token（优先使用用户 token，否则使用 API Key）
+func (c *Client) getDeleteToken() string {
+	if c.UserToken != "" {
+		return c.UserToken
+	}
+	return c.APIKey
 }
 
 // baseURL 返回 Emby 服务器基础 URL
@@ -426,8 +494,15 @@ func (c *Client) GetMediaItemsModifiedSince(ctx context.Context, since time.Time
 // GetAllItemIDs 获取 Emby 中所有媒体条目的 ID 列表（用于增量同步时检测已删除的条目）
 // 使用大页面分页获取，只取 ID 字段以减少数据量
 func (c *Client) GetAllItemIDs(ctx context.Context, itemType string) (map[string]bool, int, error) {
+	return c.GetAllItemIDsWithProgress(ctx, itemType, nil)
+}
+
+// GetAllItemIDsWithProgress 获取 Emby 中所有媒体条目的 ID 列表，支持进度回调
+// onProgress(fetched, total) 在每页拉取后调用
+func (c *Client) GetAllItemIDsWithProgress(ctx context.Context, itemType string, onProgress func(fetched, total int)) (map[string]bool, int, error) {
 	ids := make(map[string]bool, 300000)
 	startIndex := 0
+	totalCount := 0
 
 	for {
 		select {
@@ -458,11 +533,18 @@ func (c *Client) GetAllItemIDs(ctx context.Context, itemType string) (map[string
 			break
 		}
 
+		totalCount = resp.TotalRecordCount
+
 		for _, item := range resp.Items {
 			ids[item.ID] = true
 		}
 
 		startIndex += len(resp.Items)
+
+		// 调用进度回调
+		if onProgress != nil {
+			onProgress(startIndex, totalCount)
+		}
 
 		if startIndex >= resp.TotalRecordCount {
 			break
@@ -490,14 +572,16 @@ func (c *Client) DeleteVersion(ctx context.Context, itemID string) error {
 // deleteVersionPrimary 使用主端点删除版本
 // POST /emby/Items/{itemId}/DeleteVersion
 func (c *Client) deleteVersionPrimary(ctx context.Context, itemID string) error {
-	url := fmt.Sprintf("%s/emby/Items/%s/DeleteVersion", c.baseURL(), itemID)
+	reqURL := fmt.Sprintf("%s/emby/Items/%s/DeleteVersion", c.baseURL(), itemID)
+	token := c.getDeleteToken()
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, nil)
 	if err != nil {
 		return fmt.Errorf("创建删除版本请求失败: %w", err)
 	}
 
-	req.Header.Set("X-Emby-Token", c.APIKey)
+	req.Header.Set("X-Emby-Token", token)
+	logDeleteRequest("删除版本", req)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -505,8 +589,10 @@ func (c *Client) deleteVersionPrimary(ctx context.Context, itemID string) error 
 	}
 	defer resp.Body.Close()
 
+	body, _ := io.ReadAll(resp.Body)
+	log.Printf("🔗 删除版本响应: %d %s", resp.StatusCode, string(body))
+
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("Emby 删除版本失败，状态码 %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -531,14 +617,16 @@ func (c *Client) DeleteItem(ctx context.Context, itemID string) error {
 // deleteItemPrimary 使用主端点删除条目
 // POST /emby/Items/Delete?Ids={itemId}
 func (c *Client) deleteItemPrimary(ctx context.Context, itemID string) error {
-	url := fmt.Sprintf("%s/emby/Items/Delete?Ids=%s", c.baseURL(), itemID)
+	reqURL := fmt.Sprintf("%s/emby/Items/Delete?Ids=%s", c.baseURL(), itemID)
+	token := c.getDeleteToken()
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, nil)
 	if err != nil {
 		return fmt.Errorf("创建删除条目请求失败: %w", err)
 	}
 
-	req.Header.Set("X-Emby-Token", c.APIKey)
+	req.Header.Set("X-Emby-Token", token)
+	logDeleteRequest("删除条目", req)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -546,8 +634,10 @@ func (c *Client) deleteItemPrimary(ctx context.Context, itemID string) error {
 	}
 	defer resp.Body.Close()
 
+	body, _ := io.ReadAll(resp.Body)
+	log.Printf("🔗 删除条目响应: %d %s", resp.StatusCode, string(body))
+
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("Emby 删除条目失败，状态码 %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -557,14 +647,16 @@ func (c *Client) deleteItemPrimary(ctx context.Context, itemID string) error {
 // deleteItemFallback 使用备用端点删除条目
 // DELETE /emby/Items/{itemId}
 func (c *Client) deleteItemFallback(ctx context.Context, itemID string) error {
-	url := fmt.Sprintf("%s/emby/Items/%s", c.baseURL(), itemID)
+	reqURL := fmt.Sprintf("%s/emby/Items/%s", c.baseURL(), itemID)
+	token := c.getDeleteToken()
 
-	req, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", reqURL, nil)
 	if err != nil {
 		return fmt.Errorf("创建备用删除条目请求失败: %w", err)
 	}
 
-	req.Header.Set("X-Emby-Token", c.APIKey)
+	req.Header.Set("X-Emby-Token", token)
+	logDeleteRequest("备用删除", req)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -572,12 +664,36 @@ func (c *Client) deleteItemFallback(ctx context.Context, itemID string) error {
 	}
 	defer resp.Body.Close()
 
+	body, _ := io.ReadAll(resp.Body)
+	log.Printf("🔗 备用删除响应: %d %s", resp.StatusCode, string(body))
+
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("Emby 备用删除条目失败，状态码 %d: %s", resp.StatusCode, string(body))
 	}
 
 	return nil
+}
+
+// maskToken 对 token 做脱敏处理，只显示前8个字符
+func maskToken(token string) string {
+	if len(token) <= 8 {
+		return "***"
+	}
+	return token[:8]
+}
+
+// logDeleteRequest 记录删除请求的完整信息（方法、URL、所有 Header）
+func logDeleteRequest(label string, req *http.Request) {
+	log.Printf("🔗 %s请求: %s %s", label, req.Method, req.URL.String())
+	for key, values := range req.Header {
+		for _, v := range values {
+			if key == "X-Emby-Token" {
+				log.Printf("🔗   Header: %s: %s", key, v)
+			} else {
+				log.Printf("🔗   Header: %s: %s", key, v)
+			}
+		}
+	}
 }
 
 // RemoteImageInfo 远程图片信息

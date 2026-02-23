@@ -9,6 +9,7 @@ const snackbar = useSnackbar()
 const cacheStatus = ref(null)
 const loadingStatus = ref(false)
 const wsListening = ref(false) // WebSocket 实时监听状态
+const wsBusy = ref(false) // 实时监控正在同步中
 
 // 同步状态
 const syncing = ref(false)
@@ -48,6 +49,7 @@ async function fetchCacheStatus() {
     const { data } = await api.get('/cache/status')
     cacheStatus.value = data.data
     wsListening.value = data.ws_listening || false
+    wsBusy.value = data.ws_busy || false
   } catch (e) {
     console.error('获取缓存状态失败', e)
   } finally {
@@ -133,7 +135,17 @@ function connectSSE() {
 }
 
 function syncMedia() {
-  connectSSE()
+  // 先刷新状态，检查实时监控是否忙碌
+  api.get('/cache/status').then(({ data }) => {
+    wsBusy.value = data.ws_busy || false
+    if (data.ws_busy) {
+      snackbar.error('实时监控正在同步中，请稍后再试')
+      return
+    }
+    connectSSE()
+  }).catch(() => {
+    connectSSE()
+  })
 }
 
 async function checkActiveSync() {
@@ -243,13 +255,13 @@ onBeforeUnmount(closeSSE)
           <div class="d-flex align-center flex-wrap ga-3">
             <VBtn
               color="primary"
-              :disabled="syncing"
+              :disabled="syncing || wsBusy"
               :loading="syncing && !syncProgress"
               size="default"
               @click="syncMedia"
             >
               <VIcon icon="ri-loop-left-line" class="me-1" />
-              {{ syncing ? '同步中...' : '开始同步' }}
+              {{ wsBusy ? '实时监控同步中...' : syncing ? '同步中...' : '开始同步' }}
             </VBtn>
 
             <div class="sync-mode-group">
@@ -275,14 +287,14 @@ onBeforeUnmount(closeSSE)
           </div>
 
           <div class="text-caption text-medium-emphasis mt-2">
-            {{ fullSync ? '⚠ 将清空本地缓存并从 Emby 重新拉取所有数据' : 'ℹ 仅同步新增和修改的数据（删除由实时监听处理）' }}
+            {{ fullSync ? '⚠ 将清空本地缓存并从 Emby 重新拉取所有数据' : 'ℹ 仅同步新增和修改的数据，并自动检测删除' }}
           </div>
 
           <!-- 媒体库自动监听状态 -->
           <div class="d-flex align-center mt-3">
             <span class="ws-dot" :class="wsListening ? 'online' : 'offline'" />
             <span class="text-caption" :class="wsListening ? 'text-success' : 'text-medium-emphasis'">
-              {{ wsListening ? '自动监听中 — Emby 媒体库变更每 30 秒自动同步' : '自动监听未启动' }}
+              {{ wsListening ? (wsBusy ? '自动监听中 — 正在处理媒体库变更...' : '自动监听中 — Emby 媒体库变更每 5 分钟自动同步') : '自动监听未启动' }}
             </span>
           </div>
 
@@ -297,7 +309,7 @@ onBeforeUnmount(closeSSE)
                 class="me-2"
               />
               <span class="text-body-2 font-weight-medium">
-                正在{{ syncProgress.phase === 'season' ? '重建季缓存' : '同步媒体库' }}
+                正在{{ syncProgress.phase === 'season' ? '重建季缓存' : syncProgress.phase === 'delete' ? '检测已删除条目' : '同步媒体库' }}
               </span>
             </div>
 
@@ -335,7 +347,7 @@ onBeforeUnmount(closeSSE)
                 <div class="text-body-2 font-weight-semibold">同步完成</div>
                 <div class="text-caption text-medium-emphasis">
                   <template v-if="syncResult.is_incremental">
-                    增量同步：新增 {{ syncResult.new_items?.toLocaleString() }} 个，更新 {{ syncResult.updated_items?.toLocaleString() }} 个，
+                    增量同步：新增 {{ syncResult.new_items?.toLocaleString() }} 个，更新 {{ syncResult.updated_items?.toLocaleString() }} 个，删除 {{ syncResult.deleted_items?.toLocaleString() || 0 }} 个，
                     当前共 {{ syncResult.total_items?.toLocaleString() }} 个媒体条目，{{ syncResult.total_seasons?.toLocaleString() }} 个季，耗时 {{ formatDuration(syncResult.elapsed_ms) }}
                   </template>
                   <template v-else>

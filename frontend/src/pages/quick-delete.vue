@@ -153,7 +153,7 @@ function getChildCount(item) {
           <VCol cols="12" sm="8">
             <VTextField
               v-model="searchInput"
-              placeholder="输入电影或剧集名称搜索..."
+              placeholder="输入名称或 TMDB ID 搜索..."
               density="compact"
               variant="outlined"
               hide-details
@@ -181,39 +181,105 @@ function getChildCount(item) {
 
       <VProgressLinear v-if="searching" indeterminate class="mb-3" />
 
-      <div v-if="searchResults.length > 0" class="poster-grid">
-        <div v-for="item in searchResults" :key="item.Id" class="poster-item" @click="onDeleteClick(item)">
-          <!-- 海报图片 -->
-          <div class="poster-wrapper">
-            <img
-              v-if="item.ImageUrl"
-              :src="item.ImageUrl"
-              :alt="item.Name"
-              class="poster-img"
-              loading="lazy"
-            />
-            <div v-else class="poster-placeholder">
-              <VIcon :icon="item.Type === 'Movie' ? 'ri-film-fill' : 'ri-tv-2-fill'" size="40" color="rgba(255,255,255,0.3)" />
+      <VRow v-if="searchResults.length > 0">
+        <VCol v-for="item in searchResults" :key="item.Id" cols="12" sm="6" lg="4">
+          <VCard class="result-card" hover>
+            <div class="d-flex">
+              <!-- 左侧海报 -->
+              <div class="result-poster" @click="onDeleteClick(item)">
+                <VImg
+                  v-if="item.ImageUrl"
+                  :src="item.ImageUrl"
+                  width="130"
+                  height="195"
+                  cover
+                />
+                <div v-else class="result-poster-empty d-flex align-center justify-center">
+                  <VIcon :icon="item.Type === 'Movie' ? 'ri-film-fill' : 'ri-tv-2-fill'" size="32" color="rgba(255,255,255,0.25)" />
+                </div>
+                <div class="result-poster-overlay">
+                  <VIcon icon="ri-delete-bin-line" size="24" color="white" />
+                </div>
+              </div>
+
+              <!-- 右侧信息 -->
+              <div class="d-flex flex-column flex-grow-1" style="min-width: 0;">
+                <VCardText class="pb-1">
+                  <div class="text-h6 font-weight-bold text-truncate text-high-emphasis">{{ item.Name }}</div>
+                  <div class="d-flex align-center ga-2 mt-2">
+                    <VChip size="x-small" :color="item.Type === 'Movie' ? 'primary' : 'info'" variant="flat" label>
+                      {{ formatType(item.Type) }}
+                    </VChip>
+                    <span v-if="item.ProductionYear" class="text-body-1 text-high-emphasis font-weight-medium">{{ item.ProductionYear }}</span>
+                  </div>
+                  <div v-if="item.Type === 'Series' && getChildCount(item)" class="text-caption text-medium-emphasis mt-1">
+                    共 {{ getChildCount(item) }} 集
+                  </div>
+                  <!-- 额外信息 -->
+                  <div class="d-flex flex-wrap ga-2 mt-3">
+                    <VChip v-if="item.TmdbId" size="x-small" variant="tonal" color="success" label :href="'https://www.themoviedb.org/' + (item.Type === 'Movie' ? 'movie' : 'tv') + '/' + item.TmdbId" target="_blank" @click.stop>
+                      <VIcon icon="ri-movie-2-line" size="12" class="me-1" />
+                      TMDB {{ item.TmdbId }}
+                    </VChip>
+                    <VChip v-if="item.ImdbId" size="x-small" variant="tonal" color="warning" label :href="'https://www.imdb.com/title/' + item.ImdbId" target="_blank" @click.stop>
+                      <VIcon icon="ri-star-line" size="12" class="me-1" />
+                      {{ item.ImdbId }}
+                    </VChip>
+                    <VChip v-if="item.Type === 'Series' && getChildCount(item)" size="x-small" variant="tonal" label>
+                      <VIcon icon="ri-play-list-2-line" size="12" class="me-1" />
+                      {{ getChildCount(item) }} 集
+                    </VChip>
+                  </div>
+                  <div v-if="item.Path" class="mt-2">
+                    <VChip size="x-small" variant="tonal" color="secondary" label class="path-chip">
+                      <VIcon icon="ri-folder-line" size="12" class="me-1" />
+                      {{ item.Path }}
+                    </VChip>
+                  </div>
+                </VCardText>
+
+                <VSpacer />
+
+                <VCardActions class="pt-0">
+                  <VBtn
+                    v-if="item.EmbyUrl"
+                    :href="item.EmbyUrl"
+                    target="_blank"
+                    variant="text"
+                    color="primary"
+                    size="small"
+                    @click.stop
+                  >
+                    <VIcon icon="ri-external-link-line" size="16" class="me-1" />
+                    Emby
+                  </VBtn>
+                  <VBtn
+                    v-if="item.TmdbId"
+                    :href="'https://www.themoviedb.org/' + (item.Type === 'Movie' ? 'movie' : 'tv') + '/' + item.TmdbId"
+                    target="_blank"
+                    variant="text"
+                    color="success"
+                    size="small"
+                    @click.stop
+                  >
+                    <VIcon icon="ri-movie-2-line" size="16" class="me-1" />
+                    TMDB
+                  </VBtn>
+                  <VBtn
+                    variant="text"
+                    color="error"
+                    size="small"
+                    @click.stop="onDeleteClick(item)"
+                  >
+                    <VIcon icon="ri-delete-bin-line" size="16" class="me-1" />
+                    删除
+                  </VBtn>
+                </VCardActions>
+              </div>
             </div>
-            <!-- 集数角标 -->
-            <div v-if="item.Type === 'Series' && getChildCount(item)" class="episode-badge">
-              {{ getChildCount(item) }}
-            </div>
-            <!-- 悬浮删除遮罩 -->
-            <div class="poster-overlay">
-              <VIcon icon="ri-delete-bin-line" size="28" color="white" />
-            </div>
-          </div>
-          <!-- 信息区域 -->
-          <div class="poster-info">
-            <div class="poster-name">{{ item.Name }}</div>
-            <div class="poster-meta">
-              {{ formatType(item.Type) }}
-              <span v-if="item.ProductionYear"> · {{ item.ProductionYear }}</span>
-            </div>
-          </div>
-        </div>
-      </div>
+          </VCard>
+        </VCol>
+      </VRow>
 
       <div v-else-if="!searching" class="text-center pa-8 text-body-2 text-medium-emphasis">
         没有找到匹配的结果
@@ -288,59 +354,30 @@ function getChildCount(item) {
   box-shadow: none !important;
 }
 
-.poster-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 16px;
-}
-
-.poster-item {
-  cursor: pointer;
-  text-align: center;
-}
-
-.poster-wrapper {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 2 / 3;
-  border-radius: 8px;
+.result-card {
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   overflow: hidden;
-  background: rgba(var(--v-theme-surface-variant), 0.5);
 }
 
-.poster-img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
+.result-poster {
+  position: relative;
+  width: 130px;
+  min-height: 195px;
+  flex-shrink: 0;
+  cursor: pointer;
+  overflow: hidden;
 }
 
-.poster-placeholder {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.result-poster-empty {
+  width: 130px;
+  height: 195px;
   background: rgba(var(--v-theme-surface-variant), 0.3);
 }
 
-.episode-badge {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  background: rgba(var(--v-theme-primary), 0.85);
-  color: white;
-  font-size: 0.75rem;
-  font-weight: 600;
-  padding: 2px 6px;
-  border-radius: 4px;
-  line-height: 1.3;
-}
-
-.poster-overlay {
+.result-poster-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(0, 0, 0, 0.5);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -348,41 +385,22 @@ function getChildCount(item) {
   transition: opacity 0.2s;
 }
 
-.poster-item:hover .poster-overlay {
+.result-poster:hover .result-poster-overlay {
   opacity: 1;
 }
 
-.poster-info {
-  padding: 8px 2px 0;
-}
-
-.poster-name {
-  font-size: 0.875rem;
-  font-weight: 500;
-  line-height: 1.3;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.poster-meta {
-  font-size: 0.75rem;
-  color: rgba(var(--v-theme-on-surface), 0.6);
-  margin-top: 2px;
+.path-chip {
+  max-width: 100%;
+  
+  :deep(.v-chip__content) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 @media (max-width: 599.98px) {
-  .poster-grid {
-    grid-template-columns: repeat(3, 1fr);
-    gap: 10px;
-  }
-
-  .poster-name {
-    font-size: 0.8rem;
-  }
-
-  // 移动端不需要 hover 效果，改为始终显示半透明删除图标
-  .poster-overlay {
+  .result-poster-overlay {
     opacity: 0;
   }
 }

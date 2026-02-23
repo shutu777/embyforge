@@ -23,6 +23,7 @@ type MediaCache struct {
 	SeriesID          string    `gorm:"size:50;default:'';index" json:"series_id"`     // 所属 Series 的 Emby ID
 	SeriesName        string    `gorm:"size:500;default:''" json:"series_name"`  // 所属 Series 名称
 	LibraryName       string    `gorm:"size:255" json:"library_name"`
+	DateLastSaved     time.Time `gorm:"index" json:"date_last_saved"`  // Emby 最后保存时间
 	CachedAt          time.Time `gorm:"not null" json:"cached_at"`
 }
 
@@ -44,6 +45,17 @@ func NewMediaCacheFromItem(item emby.MediaItem, libraryName string) MediaCache {
 
 	_, hasPrimary := item.ImageTags["Primary"]
 
+	// 解析 Emby 的 DateLastSaved 时间戳
+	var dateLastSaved time.Time
+	if item.DateLastSaved != "" {
+		// Emby 返回的时间格式：2006-01-02T15:04:05.0000000Z
+		if t, err := time.Parse("2006-01-02T15:04:05.0000000Z", item.DateLastSaved); err == nil {
+			dateLastSaved = t
+		} else if t, err := time.Parse(time.RFC3339, item.DateLastSaved); err == nil {
+			dateLastSaved = t
+		}
+	}
+
 	return MediaCache{
 		EmbyItemID:        item.ID,
 		Name:              item.Name,
@@ -58,6 +70,7 @@ func NewMediaCacheFromItem(item emby.MediaItem, libraryName string) MediaCache {
 		SeriesID:          item.SeriesID,
 		SeriesName:        item.SeriesName,
 		LibraryName:       libraryName,
+		DateLastSaved:     dateLastSaved,
 		CachedAt:          time.Now(),
 	}
 }

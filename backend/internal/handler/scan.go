@@ -53,6 +53,24 @@ func (h *ScanHandler) getEmbyClient() (*emby.Client, error) {
 	return emby.NewClient(config.Host, config.Port, config.APIKey), nil
 }
 
+// getEmbyClientWithAuth 从数据库获取 Emby 配置并创建带用户认证的客户端
+// 用于删除等需要用户权限的操作
+func (h *ScanHandler) getEmbyClientWithAuth(ctx context.Context) (*emby.Client, error) {
+	var config model.EmbyConfig
+	if err := h.DB.First(&config).Error; err != nil {
+		return nil, err
+	}
+	client := emby.NewClient(config.Host, config.Port, config.APIKey)
+
+	// 如果配置了用户名密码，进行用户认证
+	if config.Username != "" && config.Password != "" {
+		if _, err := client.AuthenticateByName(ctx, config.Username, config.Password); err != nil {
+			return nil, fmt.Errorf("Emby 用户认证失败: %w", err)
+		}
+	}
+	return client, nil
+}
+
 // StartScrapeAnomalyScan 启动刮削异常扫描
 func (h *ScanHandler) StartScrapeAnomalyScan(c *gin.Context) {
 	log.Printf("🔍 开始刮削异常扫描...")
@@ -417,17 +435,18 @@ func (h *ScanHandler) CleanupDuplicateMedia(c *gin.Context) {
 
 	log.Printf("🧹 开始批量清理重复媒体，共 %d 个条目...", len(req.Items))
 
-	client, err := h.getEmbyClient()
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Minute)
+	defer cancel()
+
+	client, err := h.getEmbyClientWithAuth(ctx)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    400,
-			"message": "请先配置 Emby 服务器连接信息",
+			"message": "请先配置 Emby 服务器连接信息（删除操作需要配置用户名密码）",
+			"error":   err.Error(),
 		})
 		return
 	}
-
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Minute)
-	defer cancel()
 
 	deletedCount := 0
 	failedCount := 0
@@ -605,17 +624,18 @@ func (h *ScanHandler) CleanupScrapeAnomalies(c *gin.Context) {
 
 	log.Printf("🧹 开始批量删除刮削异常条目，共 %d 个...", len(req.Items))
 
-	client, err := h.getEmbyClient()
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Minute)
+	defer cancel()
+
+	client, err := h.getEmbyClientWithAuth(ctx)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    400,
-			"message": "请先配置 Emby 服务器连接信息",
+			"message": "请先配置 Emby 服务器连接信息（删除操作需要配置用户名密码）",
+			"error":   err.Error(),
 		})
 		return
 	}
-
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Minute)
-	defer cancel()
 
 	deletedCount := 0
 	failedCount := 0

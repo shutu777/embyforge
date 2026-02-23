@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -57,7 +58,17 @@ func (h *QuickDeleteHandler) SearchEmbyMedia(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
 
-	items, err := client.SearchItems(ctx, keyword, limit)
+	var items []emby.MediaItem
+
+	// 判断是否为 TMDB ID（纯数字）
+	if isTmdbID(keyword) {
+		// 按 TMDB ID 搜索
+		items, err = h.searchByTmdbID(ctx, client, keyword, limit)
+	} else {
+		// 按关键字搜索
+		items, err = client.SearchItems(ctx, keyword, limit)
+	}
+
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "搜索失败: " + err.Error()})
 		return
@@ -65,6 +76,13 @@ func (h *QuickDeleteHandler) SearchEmbyMedia(c *gin.Context) {
 
 	// 构建带海报 URL 的结果
 	baseURL := fmt.Sprintf("%s:%d", client.Host, client.Port)
+
+	// 获取 serverId 用于 Emby Web 跳转链接
+	serverID := ""
+	if info, err := client.TestConnection(); err == nil {
+		serverID = info.ID
+	}
+
 	type SearchResult struct {
 		ID                 string `json:"Id"`
 		Name               string `json:"Name"`
@@ -73,6 +91,10 @@ func (h *QuickDeleteHandler) SearchEmbyMedia(c *gin.Context) {
 		ChildCount         int    `json:"ChildCount"`
 		RecursiveItemCount int    `json:"RecursiveItemCount"`
 		ImageURL           string `json:"ImageUrl"`
+		EmbyURL            string `json:"EmbyUrl"`
+		TmdbID             string `json:"TmdbId"`
+		ImdbID             string `json:"ImdbId"`
+		Path               string `json:"Path"`
 	}
 
 	results := make([]SearchResult, 0, len(items))
@@ -81,6 +103,9 @@ func (h *QuickDeleteHandler) SearchEmbyMedia(c *gin.Context) {
 		if _, ok := item.ImageTags["Primary"]; ok {
 			imgURL = fmt.Sprintf("%s/emby/Items/%s/Images/Primary?maxHeight=300&api_key=%s", baseURL, item.ID, client.APIKey)
 		}
+		// 构建 Emby Web 跳转链接
+		embyURL := fmt.Sprintf("%s/web/index.html#!/item?id=%s&serverId=%s", baseURL, item.ID, serverID)
+
 		results = append(results, SearchResult{
 			ID:                 item.ID,
 			Name:               item.Name,
@@ -89,10 +114,46 @@ func (h *QuickDeleteHandler) SearchEmbyMedia(c *gin.Context) {
 			ChildCount:         item.ChildCount,
 			RecursiveItemCount: item.RecursiveItemCount,
 			ImageURL:           imgURL,
+			EmbyURL:            embyURL,
+			TmdbID:             item.ProviderIds["Tmdb"],
+			ImdbID:             item.ProviderIds["Imdb"],
+			Path:               item.Path,
 		})
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": results})
+}
+
+// isTmdbID 判断输入是否为 TMDB ID（纯数字）
+func isTmdbID(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// searchByTmdbID 通过 TMDB ID 搜索 Emby 媒体（电影和剧集都搜）
+func (h *QuickDeleteHandler) searchByTmdbID(ctx context.Context, client *emby.Client, tmdbID string, limit int) ([]emby.MediaItem, error) {
+	baseURL := fmt.Sprintf("%s:%d", client.Host, client.Port)
+	url := fmt.Sprintf("%s/emby/Items?AnyProviderIdEquals=Tmdb.%s&IncludeItemTypes=Movie,Series&Recursive=true&Limit=%d&Fields=Path,ProviderIds,ChildCount,RecursiveItemCount,ProductionYear",
+		baseURL, tmdbID, limit)
+
+	body, err := embyGet(url, client.APIKey)
+	if err != nil {
+		return nil, fmt.Errorf("TMDB ID 搜索失败: %w", err)
+	}
+
+	var resp emby.MediaItemsResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("解析搜索结果失败: %w", err)
+	}
+
+	return resp.Items, nil
 }
 
 // GetSeriesSeasons GET /api/quick-delete/seasons/:seriesId - 获取剧集的季列表

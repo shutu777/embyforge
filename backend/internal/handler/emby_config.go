@@ -23,9 +23,11 @@ func NewEmbyConfigHandler(db *gorm.DB) *EmbyConfigHandler {
 
 // EmbyConfigRequest Emby 配置请求体
 type EmbyConfigRequest struct {
-	Host   string `json:"host" binding:"required"`
-	Port   int    `json:"port" binding:"required"`
-	APIKey string `json:"api_key" binding:"required"`
+	Host     string `json:"host" binding:"required"`
+	Port     int    `json:"port" binding:"required"`
+	APIKey   string `json:"api_key" binding:"required"`
+	Username string `json:"username"` // 可选，用于删除操作认证
+	Password string `json:"password"` // 可选，用于删除操作认证
 }
 
 // GetConfig 获取已保存的 Emby 配置
@@ -41,7 +43,18 @@ func (h *EmbyConfigHandler) GetConfig(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"data": config})
+	// 返回时隐藏密码，只告知是否已配置
+	hasPassword := config.Password != ""
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{
+		"id":           config.ID,
+		"host":         config.Host,
+		"port":         config.Port,
+		"api_key":      config.APIKey,
+		"username":     config.Username,
+		"has_password":  hasPassword,
+		"created_at":   config.CreatedAt,
+		"updated_at":   config.UpdatedAt,
+	}})
 }
 
 // SaveConfig 保存 Emby 配置（upsert，只保留一条记录）
@@ -58,9 +71,11 @@ func (h *EmbyConfigHandler) SaveConfig(c *gin.Context) {
 	if result.Error == gorm.ErrRecordNotFound {
 		// 创建新记录
 		config := model.EmbyConfig{
-			Host:   req.Host,
-			Port:   req.Port,
-			APIKey: req.APIKey,
+			Host:     req.Host,
+			Port:     req.Port,
+			APIKey:   req.APIKey,
+			Username: req.Username,
+			Password: req.Password,
 		}
 		if err := h.DB.Create(&config).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "保存配置失败"})
@@ -80,6 +95,11 @@ func (h *EmbyConfigHandler) SaveConfig(c *gin.Context) {
 	existing.Host = req.Host
 	existing.Port = req.Port
 	existing.APIKey = req.APIKey
+	existing.Username = req.Username
+	// 密码为空时保留原密码（前端不回传密码）
+	if req.Password != "" {
+		existing.Password = req.Password
+	}
 	if err := h.DB.Save(&existing).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "更新配置失败"})
 		return

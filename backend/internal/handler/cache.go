@@ -138,7 +138,7 @@ func (h *CacheHandler) StartWSListener() {
 			return
 		}
 		h.CacheService.HandleLibraryChanged(ctx, c, items, removed)
-	}, 30*time.Second, lastSyncAt)
+	}, 5*time.Minute, lastSyncAt)
 	h.wsListener.Start()
 }
 
@@ -166,14 +166,19 @@ func (h *CacheHandler) getEmbyClient() (*emby.Client, error) {
 
 // startSync 启动后台同步任务（如果没有正在运行的同步）
 // fullSync=true 时强制全量同步，否则尝试增量同步
-// 返回 activeSync 和是否是新启动的
-func (h *CacheHandler) startSync(client *emby.Client, fullSync bool) (*activeSync, bool) {
+// 返回 activeSync、是否是新启动的、错误信息
+func (h *CacheHandler) startSync(client *emby.Client, fullSync bool) (*activeSync, bool, string) {
 	h.syncMu.Lock()
 	defer h.syncMu.Unlock()
 
 	// 如果已有正在运行的同步，直接返回
 	if h.activeSync != nil && !h.activeSync.done {
-		return h.activeSync, false
+		return h.activeSync, false, ""
+	}
+
+	// 检查实时监控是否正在处理
+	if h.wsListener != nil && h.wsListener.IsBusy() {
+		return nil, false, "实时监控正在同步中，请稍后再试"
 	}
 
 	// 创建独立的 context（不绑定任何 HTTP 请求）
@@ -224,7 +229,7 @@ func (h *CacheHandler) startSync(client *emby.Client, fullSync bool) (*activeSyn
 		h.syncMu.Unlock()
 	}()
 
-	return as, true
+	return as, true, ""
 }
 
 // SyncCache POST /api/cache/sync - 触发媒体库同步
@@ -287,6 +292,7 @@ func (h *CacheHandler) GetCacheStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"data": status,
 		"ws_listening": h.GetWSListenerStatus(),
+		"ws_busy":      h.wsListener != nil && h.wsListener.IsBusy(),
 	})
 }
 
@@ -344,7 +350,11 @@ func (h *CacheHandler) SyncCacheStream(c *gin.Context) {
 
 	// 启动或获取已有的同步任务
 	fullSync := c.Query("fullSync") == "true"
-	as, isNew := h.startSync(client, fullSync)
+	as, isNew, busyMsg := h.startSync(client, fullSync)
+	if busyMsg != "" {
+		c.JSON(http.StatusConflict, gin.H{"code": 409, "message": busyMsg})
+		return
+	}
 	if isNew {
 		mode := "增量"
 		if fullSync {

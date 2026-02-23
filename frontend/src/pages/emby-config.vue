@@ -9,6 +9,9 @@ const snackbar = useSnackbar()
 const host = ref('')
 const port = ref(8096)
 const apiKey = ref('')
+const username = ref('')
+const password = ref('')
+const hasPassword = ref(false)
 
 // 状态
 const saving = ref(false)
@@ -22,6 +25,8 @@ onMounted(async () => {
       host.value = data.data.host || ''
       port.value = data.data.port || 8096
       apiKey.value = data.data.api_key || ''
+      username.value = data.data.username || ''
+      hasPassword.value = data.data.has_password || false
     }
   } catch (e) {
     console.error('获取配置失败', e)
@@ -36,6 +41,8 @@ async function saveConfig() {
       host: host.value,
       port: port.value,
       api_key: apiKey.value,
+      username: username.value,
+      password: password.value,
     })
     snackbar.success(data.message || '配置保存成功')
   } catch (e) {
@@ -53,6 +60,8 @@ async function testConnection() {
       host: host.value,
       port: port.value,
       api_key: apiKey.value,
+      username: username.value,
+      password: password.value,
     })
     snackbar.success(`连接成功 - 服务器: ${data.server_name}, 版本: ${data.version}`)
   } catch (e) {
@@ -95,6 +104,31 @@ async function testConnection() {
               label="API Key"
               placeholder="输入 Emby API Key"
               type="password"
+            />
+          </VCol>
+          <VCol cols="12">
+            <VDivider class="mb-2" />
+            <div class="text-subtitle-2 text-medium-emphasis mb-2">
+              用户认证（删除操作需要）
+            </div>
+          </VCol>
+          <VCol cols="12" md="6">
+            <VTextField
+              v-model="username"
+              label="Emby 用户名"
+              placeholder="输入 Emby 用户名"
+              hint="用于删除媒体时的用户认证"
+              persistent-hint
+            />
+          </VCol>
+          <VCol cols="12" md="6">
+            <VTextField
+              v-model="password"
+              label="Emby 密码"
+              :placeholder="hasPassword ? '已保存，留空则不修改' : '输入 Emby 密码'"
+              type="password"
+              :hint="hasPassword ? '已保存密码，留空则保持不变' : '用于删除媒体时的用户认证'"
+              persistent-hint
             />
           </VCol>
           <VCol cols="12">

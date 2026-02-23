@@ -28,6 +28,10 @@ type LibraryWatcher struct {
 	lastTotal int
 	// 手动同步进行中标记，轮询时跳过
 	syncActive bool
+	// 实时同步处理中标记
+	busy bool
+	// 轮询计数器，用于定期兜底删除检测
+	pollCount int
 }
 
 // NewLibraryWatcher 创建媒体库变更轮询监听器
@@ -106,6 +110,13 @@ func (w *LibraryWatcher) pollLoop() {
 	}
 }
 
+// IsBusy 返回实时监控是否正在处理变更（用于互斥手动同步）
+func (w *LibraryWatcher) IsBusy() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.busy
+}
+
 // SetSyncActive 设置手动同步状态，轮询检查时会跳过
 func (w *LibraryWatcher) SetSyncActive(active bool) {
 	w.mu.Lock()
@@ -125,9 +136,11 @@ func (w *LibraryWatcher) check() {
 		return // 手动同步进行中，跳过本次轮询
 	}
 	checkSince := w.lastCheck
+	w.pollCount++
+	currentPollCount := w.pollCount
 	w.mu.Unlock()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
 	// 1. 检查新增/修改的条目（用 MinDateLastSaved），直接收集完整 MediaItem
@@ -141,7 +154,7 @@ func (w *LibraryWatcher) check() {
 		return
 	}
 
-	// 2. 检查总数变化（用于检测删除）
+	// 2. 检查总数变化
 	currentTotal, err := w.client.GetTotalItemCount(ctx)
 	if err != nil {
 		log.Printf("⚠️ 轮询获取总数失败: %v", err)
@@ -154,19 +167,37 @@ func (w *LibraryWatcher) check() {
 	w.lastTotal = currentTotal
 	w.mu.Unlock()
 
-	// 判断是否有删除（总数减少了）
-	var removedIDs []string
+	// 判断是否需要触发删除检测（实时监控场景）：
+	// - 总数减少（明确有删除）
+	// - 每 3 次轮询兜底检测一次
+	// 注意：不再用 len(changedItems) > 0 触发删除检测，因为 294K 条目的全量 ID 对比
+	// 需要约 5 分钟，如果每次有变更都触发会导致连续阻塞
+	needDeleteDetection := false
 	if currentTotal < prevTotal {
 		diff := prevTotal - currentTotal
 		log.Printf("📡 检测到 Emby 媒体总数减少: %d → %d（减少 %d）", prevTotal, currentTotal, diff)
+		needDeleteDetection = true
+	} else if currentPollCount%3 == 0 {
+		log.Printf("📡 定期兜底删除检测（第 %d 次轮询）", currentPollCount)
+		needDeleteDetection = true
+	}
+
+	var removedIDs []string
+	if needDeleteDetection {
 		removedIDs = []string{"__DETECT_DELETIONS__"}
 	}
 
-	// 有变更时触发回调，直接传递完整 MediaItem，无需二次请求
+	// 有变更或需要删除检测时触发回调
 	if len(changedItems) > 0 || len(removedIDs) > 0 {
-		log.Printf("📡 媒体库变更检测: 新增/更新 %d, 删除信号 %v",
-			len(changedItems), len(removedIDs) > 0)
+		log.Printf("📡 媒体库变更检测: 新增/更新 %d, 删除检测 %v",
+			len(changedItems), needDeleteDetection)
+		w.mu.Lock()
+		w.busy = true
+		w.mu.Unlock()
 		w.handler(changedItems, removedIDs)
+		w.mu.Lock()
+		w.busy = false
+		w.mu.Unlock()
 	} else {
 		log.Printf("📡 轮询检查完成: 无变更 (Emby 总数: %d)", currentTotal)
 	}

@@ -445,7 +445,7 @@ func rawInsertMediaCaches(db *sql.DB, items []model.MediaCache) error {
 	defer tx.Rollback()
 
 	// 每批 500 行（14 列 × 500 = 7000 参数，远低于 SQLite 32766 限制）
-	const cols = 14
+	const cols = 15
 	const batchRows = 500
 
 	for i := 0; i < len(items); i += batchRows {
@@ -457,8 +457,8 @@ func rawInsertMediaCaches(db *sql.DB, items []model.MediaCache) error {
 
 		// 构建 INSERT INTO ... VALUES (?,?,...), (?,?,...)
 		var sb strings.Builder
-		sb.WriteString("INSERT INTO media_caches (emby_item_id,name,type,has_poster,path,provider_ids,file_size,index_number,parent_index_number,child_count,series_id,series_name,library_name,cached_at) VALUES ")
-		placeholder := "(?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+		sb.WriteString("INSERT INTO media_caches (emby_item_id,name,type,has_poster,path,provider_ids,file_size,index_number,parent_index_number,child_count,series_id,series_name,library_name,date_last_saved,cached_at) VALUES ")
+		placeholder := "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
 		for j := range batch {
 			if j > 0 {
 				sb.WriteByte(',')
@@ -470,11 +470,62 @@ func rawInsertMediaCaches(db *sql.DB, items []model.MediaCache) error {
 		for _, c := range batch {
 			args = append(args, c.EmbyItemID, c.Name, c.Type, c.HasPoster,
 				c.Path, c.ProviderIDs, c.FileSize, c.IndexNumber, c.ParentIndexNumber, c.ChildCount,
-				c.SeriesID, c.SeriesName, c.LibraryName, c.CachedAt)
+				c.SeriesID, c.SeriesName, c.LibraryName, c.DateLastSaved, c.CachedAt)
 		}
 
 		if _, err := tx.Exec(sb.String(), args...); err != nil {
 			return fmt.Errorf("批量写入失败 (rows %d-%d): %w", i, end, err)
+		}
+	}
+
+	return tx.Commit()
+}
+
+// rawUpsertMediaCaches 使用原生 SQL 批量 UPSERT 媒体缓存
+// INSERT INTO ... ON CONFLICT(emby_item_id) DO UPDATE SET ...
+// 比逐条 SELECT + UPDATE/INSERT 快 10-50 倍
+func rawUpsertMediaCaches(db *sql.DB, items []model.MediaCache) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// 每批 500 行（15 列 × 500 = 7500 参数，远低于 SQLite 32766 限制）
+	const cols = 15
+	const batchRows = 500
+
+	for i := 0; i < len(items); i += batchRows {
+		end := i + batchRows
+		if end > len(items) {
+			end = len(items)
+		}
+		batch := items[i:end]
+
+		var sb strings.Builder
+		sb.WriteString("INSERT INTO media_caches (emby_item_id,name,type,has_poster,path,provider_ids,file_size,index_number,parent_index_number,child_count,series_id,series_name,library_name,date_last_saved,cached_at) VALUES ")
+		placeholder := "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+		for j := range batch {
+			if j > 0 {
+				sb.WriteByte(',')
+			}
+			sb.WriteString(placeholder)
+		}
+		sb.WriteString(" ON CONFLICT(emby_item_id) DO UPDATE SET name=excluded.name,type=excluded.type,has_poster=excluded.has_poster,path=excluded.path,provider_ids=excluded.provider_ids,file_size=excluded.file_size,index_number=excluded.index_number,parent_index_number=excluded.parent_index_number,child_count=excluded.child_count,series_id=excluded.series_id,series_name=excluded.series_name,library_name=excluded.library_name,date_last_saved=excluded.date_last_saved,cached_at=excluded.cached_at")
+
+		args := make([]interface{}, 0, len(batch)*cols)
+		for _, c := range batch {
+			args = append(args, c.EmbyItemID, c.Name, c.Type, c.HasPoster,
+				c.Path, c.ProviderIDs, c.FileSize, c.IndexNumber, c.ParentIndexNumber, c.ChildCount,
+				c.SeriesID, c.SeriesName, c.LibraryName, c.DateLastSaved, c.CachedAt)
+		}
+
+		if _, err := tx.Exec(sb.String(), args...); err != nil {
+			return fmt.Errorf("批量 UPSERT 失败 (rows %d-%d): %w", i, end, err)
 		}
 	}
 
@@ -614,20 +665,237 @@ func (s *CacheService) buildSeasonCacheFromEpisodes(sqlDB *sql.DB) (int, error) 
 	return len(aggs), nil
 }
 
-// IncrementalSyncMediaCacheWithProgress 增量同步：只同步新增和修改的条目，检测并删除已移除的条目
-// 流程：
-//  1. 获取上次同步时间（last_sync_at）
-//  2. 如果没有上次同步记录 → 回退到全量同步
-//  3. 通过 MinDateLastSaved 获取修改过的条目 → UPSERT 到本地缓存
-//  4. 获取 Emby 当前所有 ID → 删除本地有但 Emby 已移除的条目
-//  5. 重建季缓存
+// rebuildSeasonCacheForSeries 仅重建指定 Series 的季缓存
+// 1. 删除这些 Series 的旧季缓存记录
+// 2. 从 media_caches 中聚合这些 Series 的 Episode 数据
+// 3. 插入新的季缓存记录
+// 如果 seriesIDs 为空，跳过整个操作
+func (s *CacheService) rebuildSeasonCacheForSeries(sqlDB *sql.DB, seriesIDs []string) (int, error) {
+	if len(seriesIDs) == 0 {
+		return 0, nil
+	}
+
+	// 1. 删除这些 Series 的旧季缓存
+	const deleteBatch = 500
+	for i := 0; i < len(seriesIDs); i += deleteBatch {
+		end := i + deleteBatch
+		if end > len(seriesIDs) {
+			end = len(seriesIDs)
+		}
+		if err := s.DB.Where("series_emby_item_id IN ?", seriesIDs[i:end]).Delete(&model.SeasonCache{}).Error; err != nil {
+			return 0, fmt.Errorf("删除旧季缓存失败: %w", err)
+		}
+	}
+
+	// 2. 从 media_caches 聚合这些 Series 的 Episode 数据
+	// 构建 IN 子句
+	placeholders := make([]string, len(seriesIDs))
+	args := make([]interface{}, len(seriesIDs))
+	for i, id := range seriesIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := fmt.Sprintf(`
+		SELECT series_id, parent_index_number, COUNT(*) as episode_count
+		FROM media_caches
+		WHERE type = 'Episode' AND series_id IN (%s)
+		GROUP BY series_id, parent_index_number
+	`, strings.Join(placeholders, ","))
+
+	rows, err := sqlDB.Query(query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("聚合 Episode 数据失败: %w", err)
+	}
+	defer rows.Close()
+
+	type seasonAgg struct {
+		seriesID     string
+		seasonNumber int
+		episodeCount int
+	}
+	var aggs []seasonAgg
+	for rows.Next() {
+		var a seasonAgg
+		if err := rows.Scan(&a.seriesID, &a.seasonNumber, &a.episodeCount); err != nil {
+			return 0, fmt.Errorf("读取聚合结果失败: %w", err)
+		}
+		aggs = append(aggs, a)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("遍历聚合结果失败: %w", err)
+	}
+
+	if len(aggs) == 0 {
+		return 0, nil
+	}
+
+	// 3. 批量插入新的季缓存记录
+	tx, err := sqlDB.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("开启事务失败: %w", err)
+	}
+	defer tx.Rollback()
+
+	const batchRows = 500
+	now := time.Now()
+
+	for i := 0; i < len(aggs); i += batchRows {
+		end := i + batchRows
+		if end > len(aggs) {
+			end = len(aggs)
+		}
+		batch := aggs[i:end]
+
+		var sb strings.Builder
+		sb.WriteString("INSERT INTO season_caches (series_emby_item_id, season_emby_item_id, season_number, episode_count, cached_at) VALUES ")
+		placeholder := "(?,?,?,?,?)"
+		for j := range batch {
+			if j > 0 {
+				sb.WriteByte(',')
+			}
+			sb.WriteString(placeholder)
+		}
+
+		insertArgs := make([]interface{}, 0, len(batch)*5)
+		for _, a := range batch {
+			seasonEmbyID := fmt.Sprintf("%s_S%d", a.seriesID, a.seasonNumber)
+			insertArgs = append(insertArgs, a.seriesID, seasonEmbyID, a.seasonNumber, a.episodeCount, now)
+		}
+
+		if _, err := tx.Exec(sb.String(), insertArgs...); err != nil {
+			return 0, fmt.Errorf("批量写入季缓存失败 (rows %d-%d): %w", i, end, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("提交事务失败: %w", err)
+	}
+
+	log.Printf("📊 增量重建了 %d 个 Series 的 %d 条季缓存记录", len(seriesIDs), len(aggs))
+	return len(aggs), nil
+}
+
+// filterAndUpsertChangedItems 过滤并批量 UPSERT 变更条目
+// 1. 批量查询本地已有条目的 emby_item_id → date_last_saved 映射
+// 2. 对比 Emby 的 DateLastSaved 和本地记录，跳过无变化的条目
+// 3. 对真正需要更新的条目执行批量 UPSERT
+// 返回：newCount（新增数）, updatedCount（更新数）, skippedCount（跳过数）
+func (s *CacheService) filterAndUpsertChangedItems(sqlDB *sql.DB, items []model.MediaCache) (newCount, updatedCount, skippedCount int, err error) {
+	if len(items) == 0 {
+		return 0, 0, 0, nil
+	}
+
+	// 1. 收集所有待处理的 emby_item_id
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.EmbyItemID)
+	}
+
+	// 2. 批量查询本地已有条目的 emby_item_id → date_last_saved 映射
+	type localInfo struct {
+		dateLastSaved time.Time
+	}
+	localMap := make(map[string]localInfo, len(ids))
+
+	// 分批查询，避免 SQL IN 参数过多
+	const queryBatch = 500
+	for i := 0; i < len(ids); i += queryBatch {
+		end := i + queryBatch
+		if end > len(ids) {
+			end = len(ids)
+		}
+		batchIDs := ids[i:end]
+
+		// 构建 SELECT ... WHERE emby_item_id IN (?, ?, ...)
+		placeholders := make([]string, len(batchIDs))
+		args := make([]interface{}, len(batchIDs))
+		for j, id := range batchIDs {
+			placeholders[j] = "?"
+			args[j] = id
+		}
+		query := fmt.Sprintf("SELECT emby_item_id, date_last_saved FROM media_caches WHERE emby_item_id IN (%s)", strings.Join(placeholders, ","))
+
+		rows, queryErr := sqlDB.Query(query, args...)
+		if queryErr != nil {
+			return 0, 0, 0, fmt.Errorf("查询本地缓存失败: %w", queryErr)
+		}
+
+		for rows.Next() {
+			var embyID string
+			var dls sql.NullTime
+			if scanErr := rows.Scan(&embyID, &dls); scanErr != nil {
+				rows.Close()
+				return 0, 0, 0, fmt.Errorf("读取本地缓存记录失败: %w", scanErr)
+			}
+			info := localInfo{}
+			if dls.Valid {
+				info.dateLastSaved = dls.Time
+			}
+			localMap[embyID] = info
+		}
+		rows.Close()
+		if rowErr := rows.Err(); rowErr != nil {
+			return 0, 0, 0, fmt.Errorf("遍历本地缓存结果失败: %w", rowErr)
+		}
+	}
+
+	// 3. 过滤：跳过 DateLastSaved 没有变化的条目
+	toUpsert := make([]model.MediaCache, 0, len(items))
+	for _, item := range items {
+		if local, exists := localMap[item.EmbyItemID]; exists {
+			// 已存在：比较 DateLastSaved，如果没变化则跳过
+			if !item.DateLastSaved.IsZero() && !local.dateLastSaved.IsZero() &&
+				!item.DateLastSaved.After(local.dateLastSaved) {
+				skippedCount++
+				continue
+			}
+			updatedCount++
+		} else {
+			newCount++
+		}
+		toUpsert = append(toUpsert, item)
+	}
+
+	// 4. 批量 UPSERT 真正需要写入的条目
+	if len(toUpsert) > 0 {
+		if upsertErr := rawUpsertMediaCaches(sqlDB, toUpsert); upsertErr != nil {
+			// 回退到逐条写入
+			log.Printf("⚠️ 批量 UPSERT 失败，回退到逐条写入: %v", upsertErr)
+			newCount, updatedCount, skippedCount = 0, 0, 0
+			for _, item := range items {
+				_, exists := localMap[item.EmbyItemID]
+				if err := s.DB.Clauses(clause.OnConflict{
+					Columns:   []clause.Column{{Name: "emby_item_id"}},
+					DoUpdates: clause.AssignmentColumns([]string{"name", "type", "has_poster", "path", "provider_ids", "file_size", "index_number", "parent_index_number", "child_count", "series_id", "series_name", "library_name", "date_last_saved", "cached_at"}),
+				}).Create(&item).Error; err != nil {
+					log.Printf("⚠️ 逐条写入失败 (EmbyItemID=%s): %v", item.EmbyItemID, err)
+					continue
+				}
+				if exists {
+					updatedCount++
+				} else {
+					newCount++
+				}
+			}
+			return newCount, updatedCount, skippedCount, nil
+		}
+	}
+
+	return newCount, updatedCount, skippedCount, nil
+}
+
+// IncrementalSyncMediaCacheWithProgress 增量同步：只同步新增和修改的条目，智能检测删除
+// 性能优化版：
+//  1. 时间戳过滤 + 批量 UPSERT（跳过无变化条目，批量写入）
+//  2. 智能删除检测（先比总数，仅在需要时才拉全量 ID）
+//  3. 增量季缓存重建（仅重建受影响的 Series）
+//  4. 各阶段耗时日志
 func (s *CacheService) IncrementalSyncMediaCacheWithProgress(ctx context.Context, client *emby.Client, progressCh chan<- SyncProgress) {
 	// 注意：不使用 defer close(progressCh)，因为可能回退到全量同步（由全量方法负责 close）
 
 	// 获取上次同步时间
 	status, err := s.GetCacheStatus()
 	if err != nil || status.LastSyncAt == nil || status.TotalItems == 0 {
-		// 没有上次同步记录，回退到全量同步（全量方法会负责 close progressCh）
 		log.Printf("📊 没有上次同步记录，回退到全量同步")
 		s.SyncMediaCacheWithProgress(ctx, client, progressCh)
 		return
@@ -658,13 +926,25 @@ func (s *CacheService) IncrementalSyncMediaCacheWithProgress(ctx context.Context
 	default:
 	}
 
+	// 获取底层 *sql.DB 用于原生 SQL 操作
+	sqlDB, err := s.DB.DB()
+	if err != nil {
+		sendError(fmt.Sprintf("获取数据库连接失败: %v", err))
+		return
+	}
+
 	lastSyncAt := *status.LastSyncAt
 	log.Printf("🔄 开始增量同步，上次同步时间: %s", lastSyncAt.Format(time.RFC3339))
 
 	result := &SyncResult{IsIncremental: true}
 
-	// 阶段 1：获取修改过的条目并 UPSERT
+	// ========== 阶段 1：时间戳过滤 + 批量 UPSERT ==========
+	upsertStart := time.Now()
 	sendProgress("media", 0, 0)
+
+	// 收集所有变更条目和涉及的 SeriesID（用于增量季缓存重建）
+	var allChangedCaches []model.MediaCache
+	affectedSeriesSet := make(map[string]bool)
 
 	processed := 0
 	err = client.GetMediaItemsModifiedSince(ctx, lastSyncAt, emby.SyncItemTypes, func(items []emby.MediaItem) error {
@@ -676,47 +956,18 @@ func (s *CacheService) IncrementalSyncMediaCacheWithProgress(ctx context.Context
 		for _, item := range items {
 			cache := model.NewMediaCacheFromItem(item, "")
 			caches = append(caches, cache)
-		}
 
-		// UPSERT：存在则更新，不存在则插入
-		for _, c := range caches {
-			var existing model.MediaCache
-			dbResult := s.DB.Where("emby_item_id = ?", c.EmbyItemID).First(&existing)
-			if dbResult.Error == nil {
-				// 已存在，更新
-				if err := s.DB.Model(&existing).Updates(map[string]interface{}{
-					"name":               c.Name,
-					"type":               c.Type,
-					"has_poster":         c.HasPoster,
-					"path":               c.Path,
-					"provider_ids":       c.ProviderIDs,
-					"file_size":          c.FileSize,
-					"index_number":       c.IndexNumber,
-					"parent_index_number": c.ParentIndexNumber,
-					"child_count":        c.ChildCount,
-					"series_id":          c.SeriesID,
-					"series_name":        c.SeriesName,
-					"library_name":       c.LibraryName,
-					"cached_at":          c.CachedAt,
-				}).Error; err != nil {
-					log.Printf("⚠️ 更新缓存记录失败 (EmbyItemID=%s): %v", c.EmbyItemID, err)
-					continue
-				}
-				result.UpdatedItems++
-			} else {
-				// 不存在，插入
-				if err := s.DB.Create(&c).Error; err != nil {
-					log.Printf("⚠️ 插入缓存记录失败 (EmbyItemID=%s): %v", c.EmbyItemID, err)
-					continue
-				}
-				result.NewItems++
+			// 收集涉及的 SeriesID（Episode 的 SeriesID 和 Series 本身的 ID）
+			if item.Type == "Episode" && item.SeriesID != "" {
+				affectedSeriesSet[item.SeriesID] = true
+			} else if item.Type == "Series" {
+				affectedSeriesSet[item.ID] = true
 			}
 		}
 
+		allChangedCaches = append(allChangedCaches, caches...)
 		processed += len(items)
 		sendProgress("media", processed, 0)
-		log.Printf("📊 增量同步: 已处理 %d 个变更条目 (新增: %d, 更新: %d)",
-			processed, result.NewItems, result.UpdatedItems)
 
 		return nil
 	})
@@ -726,40 +977,74 @@ func (s *CacheService) IncrementalSyncMediaCacheWithProgress(ctx context.Context
 		return
 	}
 
-	log.Printf("📊 增量变更处理完成: 新增 %d, 更新 %d", result.NewItems, result.UpdatedItems)
-
-	// 阶段 2：删除检测已由 WebSocket 实时监听处理，增量同步不再需要
-	// 如需精确清理，请使用全量同步模式
-
-	// 阶段 3：重建季缓存
-	sendProgress("season", 0, 0)
-
-	// 清空并重建季缓存
-	if err := s.DB.Exec("DELETE FROM season_caches").Error; err != nil {
-		log.Printf("⚠️ 清空季缓存表失败: %v", err)
-	} else {
-		sqlDB, err := s.DB.DB()
-		if err != nil {
-			log.Printf("⚠️ 获取数据库连接失败: %v", err)
-		} else {
-			seasonCount, err := s.buildSeasonCacheFromEpisodes(sqlDB)
-			if err != nil {
-				log.Printf("⚠️ 从 Episode 聚合生成季缓存失败: %v", err)
-			} else {
-				result.TotalSeasons = seasonCount
-			}
+	// 批量 UPSERT（含时间戳过滤）
+	if len(allChangedCaches) > 0 {
+		newCount, updatedCount, skippedCount, upsertErr := s.filterAndUpsertChangedItems(sqlDB, allChangedCaches)
+		if upsertErr != nil {
+			sendError(fmt.Sprintf("批量 UPSERT 失败: %v", upsertErr))
+			return
 		}
+		result.NewItems = newCount
+		result.UpdatedItems = updatedCount
+		log.Printf("📊 增量变更处理完成: 新增 %d, 更新 %d, 跳过 %d (无变化)", newCount, updatedCount, skippedCount)
+	} else {
+		log.Printf("📊 增量变更处理完成: 无变更条目")
 	}
 
-	// 统计最终总数
+	upsertMs := time.Since(upsertStart).Milliseconds()
+
+	// ========== 阶段 2：智能删除检测 ==========
+	deleteStart := time.Now()
+	sendProgress("delete", 0, 0)
+
+	hasChanges := len(allChangedCaches) > 0
+	deletedCount, deleteErr := s.smartDeleteDetection(ctx, client, hasChanges, sendProgress)
+	if deleteErr != nil {
+		log.Printf("⚠️ 智能删除检测失败，跳过: %v", deleteErr)
+	} else {
+		result.DeletedItems = deletedCount
+	}
+
+	sendProgress("delete", 1, 1)
+	deleteMs := time.Since(deleteStart).Milliseconds()
+
+	// ========== 阶段 3：增量季缓存重建 ==========
+	seasonStart := time.Now()
+	sendProgress("season", 0, 0)
+
+	// 收集受影响的 SeriesID
+	affectedSeriesIDs := make([]string, 0, len(affectedSeriesSet))
+	for sid := range affectedSeriesSet {
+		affectedSeriesIDs = append(affectedSeriesIDs, sid)
+	}
+
+	if len(affectedSeriesIDs) > 0 {
+		seasonCount, seasonErr := s.rebuildSeasonCacheForSeries(sqlDB, affectedSeriesIDs)
+		if seasonErr != nil {
+			log.Printf("⚠️ 增量季缓存重建失败: %v", seasonErr)
+		} else {
+			result.TotalSeasons = seasonCount
+		}
+	} else {
+		log.Printf("📊 无 Episode 变更，跳过季缓存重建")
+		// 获取当前季缓存总数
+		var seasonTotal int64
+		s.DB.Model(&model.SeasonCache{}).Count(&seasonTotal)
+		result.TotalSeasons = int(seasonTotal)
+	}
+
+	seasonMs := time.Since(seasonStart).Milliseconds()
+
+	// ========== 统计最终结果 ==========
 	var totalCount int64
 	s.DB.Model(&model.MediaCache{}).Count(&totalCount)
 	result.TotalItems = int(totalCount)
 
 	result.ElapsedMs = time.Since(start).Milliseconds()
-	log.Printf("✅ 增量同步完成: 总计 %d 条目 (新增 %d, 更新 %d, 删除 %d), %d 个季, 耗时 %dms",
+	log.Printf("✅ 增量同步完成: 总计 %d 条目 (新增 %d, 更新 %d, 删除 %d), %d 个季, "+
+		"耗时 %dms (UPSERT: %dms, 删除检测: %dms, 季缓存: %dms)",
 		result.TotalItems, result.NewItems, result.UpdatedItems, result.DeletedItems,
-		result.TotalSeasons, result.ElapsedMs)
+		result.TotalSeasons, result.ElapsedMs, upsertMs, deleteMs, seasonMs)
 
 	select {
 	case progressCh <- SyncProgress{Phase: "done", Done: true, Processed: result.TotalItems, Total: result.TotalItems, Result: result}:
@@ -792,10 +1077,19 @@ func (s *CacheService) GetCacheStatus() (*model.CacheStatus, error) {
 
 // HandleLibraryChanged 处理媒体库变更事件
 // 由 LibraryWatcher 回调触发，直接接收完整的 MediaItem（无需二次请求）
+// 优化：使用批量 UPSERT 替代逐条 SELECT+UPDATE/INSERT，并输出进度日志
 func (s *CacheService) HandleLibraryChanged(ctx context.Context, client *emby.Client, items []emby.MediaItem, removed []string) {
-	// 处理删除检测信号
+	start := time.Now()
+
+	// 处理删除检测信号（使用智能删除检测，带进度日志）
 	if len(removed) == 1 && removed[0] == "__DETECT_DELETIONS__" {
-		s.detectAndRemoveDeletedItems(ctx, client)
+		hasChanges := len(items) > 0
+		deletedCount, err := s.smartDeleteDetection(ctx, client, hasChanges, nil)
+		if err != nil {
+			log.Printf("⚠️ 实时同步-智能删除检测失败: %v", err)
+		} else if deletedCount > 0 {
+			log.Printf("🗑️ 实时同步-删除检测: 删除了 %d 个本地多余条目", deletedCount)
+		}
 		removed = nil
 	}
 
@@ -814,65 +1108,97 @@ func (s *CacheService) HandleLibraryChanged(ctx context.Context, client *emby.Cl
 		log.Printf("🗑️ 实时同步: 已删除 %d 个缓存条目", len(removed))
 	}
 
-	// 处理新增和更新：直接使用传入的完整 MediaItem，无需再调用 GetItemByID
+	// 处理新增和更新：批量 UPSERT
 	if len(items) > 0 {
-		newCount, updateCount := 0, 0
+		// 过滤只保留我们关心的类型
+		caches := make([]model.MediaCache, 0, len(items))
 		for _, item := range items {
-			// 只处理我们关心的类型
 			if item.Type != "Movie" && item.Type != "Series" && item.Type != "Episode" {
 				continue
 			}
-
-			cache := model.NewMediaCacheFromItem(item, "")
-			var existing model.MediaCache
-			if s.DB.Where("emby_item_id = ?", cache.EmbyItemID).First(&existing).Error == nil {
-				// 已存在，更新
-				s.DB.Model(&existing).Updates(map[string]interface{}{
-					"name":                cache.Name,
-					"type":                cache.Type,
-					"has_poster":          cache.HasPoster,
-					"path":                cache.Path,
-					"provider_ids":        cache.ProviderIDs,
-					"file_size":           cache.FileSize,
-					"index_number":        cache.IndexNumber,
-					"parent_index_number": cache.ParentIndexNumber,
-					"child_count":         cache.ChildCount,
-					"series_id":           cache.SeriesID,
-					"series_name":         cache.SeriesName,
-					"library_name":        cache.LibraryName,
-					"cached_at":           cache.CachedAt,
-				})
-				updateCount++
-			} else {
-				// 不存在，插入
-				if err := s.DB.Create(&cache).Error; err != nil {
-					log.Printf("⚠️ 实时同步插入缓存失败 (EmbyItemID=%s): %v", cache.EmbyItemID, err)
-				}
-				newCount++
-			}
+			caches = append(caches, model.NewMediaCacheFromItem(item, ""))
 		}
-		if newCount > 0 || updateCount > 0 {
-			log.Printf("📡 实时同步: 新增 %d, 更新 %d 个缓存条目", newCount, updateCount)
+
+		if len(caches) > 0 {
+			log.Printf("📡 实时同步: 开始批量 UPSERT %d 个条目...", len(caches))
+			sqlDB, err := s.DB.DB()
+			if err != nil {
+				log.Printf("⚠️ 实时同步获取数据库连接失败: %v", err)
+				return
+			}
+			newCount, updatedCount, skippedCount, err := s.filterAndUpsertChangedItems(sqlDB, caches)
+			if err != nil {
+				log.Printf("⚠️ 实时同步批量 UPSERT 失败: %v", err)
+				return
+			}
+			log.Printf("📡 实时同步: 新增 %d, 更新 %d, 跳过 %d (无变化), 耗时 %dms",
+				newCount, updatedCount, skippedCount, time.Since(start).Milliseconds())
 		}
 	}
 }
 
-// detectAndRemoveDeletedItems 检测并删除 Emby 中已不存在的本地缓存条目
-// 通过分页获取 Emby 所有 ID，与本地缓存对比，删除本地多余的条目
-func (s *CacheService) detectAndRemoveDeletedItems(ctx context.Context, client *emby.Client) {
-	log.Printf("🔍 开始检测已删除的条目...")
+// shouldRunDeleteDetection 决定是否需要执行全量 ID 对比删除检测
+// 纯函数，便于测试
+func shouldRunDeleteDetection(embyTotal, localTotal int, hasChanges bool) bool {
+	// Emby 总数 < 本地总数：说明有删除
+	if embyTotal < localTotal {
+		return true
+	}
+	// 有变更条目（洗版场景：删旧加新，总数可能不变）
+	if hasChanges {
+		return true
+	}
+	// 总数一致且无变更：跳过
+	return false
+}
 
-	embyIDs, total, err := client.GetAllItemIDs(ctx, emby.SyncItemTypes)
+// smartDeleteDetection 智能删除检测
+// 先比较 Emby 总数和本地总数，仅在需要时才拉取全量 ID 进行对比
+// hasChanges: 本次增量同步是否有变更条目（洗版场景需要检测）
+// 返回删除的条目数
+func (s *CacheService) smartDeleteDetection(
+	ctx context.Context,
+	client *emby.Client,
+	hasChanges bool,
+	sendProgress func(phase string, processed, total int),
+) (int, error) {
+	// 获取 Emby 总数（1 次轻量 HTTP 请求，Limit=0）
+	embyTotal, err := client.GetTotalItemCount(ctx)
 	if err != nil {
-		log.Printf("⚠️ 获取 Emby ID 列表失败: %v", err)
-		return
+		return 0, fmt.Errorf("获取 Emby 总数失败: %w", err)
+	}
+
+	// 获取本地总数
+	var localTotal int64
+	if err := s.DB.Model(&model.MediaCache{}).Count(&localTotal).Error; err != nil {
+		return 0, fmt.Errorf("获取本地缓存总数失败: %w", err)
+	}
+
+	// 决策：是否需要执行全量 ID 对比
+	if !shouldRunDeleteDetection(embyTotal, int(localTotal), hasChanges) {
+		log.Printf("✅ 智能删除检测: 跳过 (Emby: %d, 本地: %d, 有变更: %v)", embyTotal, localTotal, hasChanges)
+		return 0, nil
+	}
+
+	log.Printf("🔍 智能删除检测: 需要全量对比 (Emby: %d, 本地: %d, 有变更: %v)", embyTotal, localTotal, hasChanges)
+
+	// 执行全量 ID 对比
+	embyIDs, _, err := client.GetAllItemIDsWithProgress(ctx, emby.SyncItemTypes, func(fetched, total int) {
+		if sendProgress != nil {
+			sendProgress("delete", fetched, total)
+		}
+		if fetched%10000 == 0 || fetched == total {
+			log.Printf("🔍 删除检测: 已获取 %d / %d 个 Emby ID", fetched, total)
+		}
+	})
+	if err != nil {
+		return 0, fmt.Errorf("获取 Emby ID 列表失败: %w", err)
 	}
 
 	// 获取本地所有 emby_item_id
 	var localIDs []string
 	if err := s.DB.Model(&model.MediaCache{}).Pluck("emby_item_id", &localIDs).Error; err != nil {
-		log.Printf("⚠️ 获取本地缓存 ID 列表失败: %v", err)
-		return
+		return 0, fmt.Errorf("获取本地缓存 ID 列表失败: %w", err)
 	}
 
 	// 找出本地有但 Emby 没有的条目
@@ -892,9 +1218,12 @@ func (s *CacheService) detectAndRemoveDeletedItems(ctx context.Context, client *
 			}
 			s.DB.Where("emby_item_id IN ?", toDelete[i:end]).Delete(&model.MediaCache{})
 		}
-		log.Printf("🗑️ 删除检测完成: 删除了 %d 个本地多余条目 (Emby 总数: %d, 本地原有: %d)",
-			len(toDelete), total, len(localIDs))
+		log.Printf("🗑️ 删除检测完成: 删除了 %d 个本地多余条目", len(toDelete))
 	} else {
-		log.Printf("✅ 删除检测完成: 无需删除 (Emby: %d, 本地: %d)", total, len(localIDs))
+		log.Printf("✅ 删除检测完成: 无需删除")
 	}
+
+	return len(toDelete), nil
 }
+
+// detectAndRemoveDeletedItems 已废弃，实时同步改用 smartDeleteDetection
