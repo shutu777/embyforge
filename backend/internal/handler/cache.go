@@ -130,7 +130,12 @@ func (h *CacheHandler) StartWSListener() {
 	}
 
 	h.wsListener = emby.NewLibraryWatcher(client, func(items []emby.MediaItem, removed []string) {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		// 删除检测需要拉取全量 ID（~294K），给更长的超时时间
+		timeout := 10 * time.Minute
+		if len(removed) == 1 && removed[0] == "__DETECT_DELETIONS__" {
+			timeout = 30 * time.Minute
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		c, err := h.getEmbyClient()
 		if err != nil {
