@@ -22,6 +22,12 @@ type QuickDeleteHandler struct {
 	DB *gorm.DB
 }
 
+// seasonDeleteReq 季删除请求（带季号）
+type seasonDeleteReq struct {
+	ID           string `json:"id"`
+	SeasonNumber int    `json:"season_number"`
+}
+
 // NewQuickDeleteHandler 创建快速删除处理器
 func NewQuickDeleteHandler(db *gorm.DB) *QuickDeleteHandler {
 	return &QuickDeleteHandler{DB: db}
@@ -204,9 +210,10 @@ func (h *QuickDeleteHandler) GetSeriesSeasons(c *gin.Context) {
 // DeleteMedia POST /api/quick-delete/delete - 删除媒体
 func (h *QuickDeleteHandler) DeleteMedia(c *gin.Context) {
 	var req struct {
-		EmbyItemID string   `json:"emby_item_id"`
-		Type       string   `json:"type"`       // movie, series, season
-		SeasonIDs  []string `json:"season_ids"` // type=season 时使用
+		EmbyItemID string            `json:"emby_item_id"`
+		Type       string            `json:"type"`       // movie, series, season
+		SeasonIDs  []string          `json:"season_ids"` // type=season 时使用（兼容旧版）
+		Seasons    []seasonDeleteReq `json:"seasons"`    // type=season 时使用（新版，带季号）
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "请求参数错误"})
@@ -237,27 +244,48 @@ func (h *QuickDeleteHandler) DeleteMedia(c *gin.Context) {
 	case "series":
 		h.deleteSeries(c, ctx, client, req.EmbyItemID)
 	case "season":
-		h.deleteSeasons(c, ctx, client, req.EmbyItemID, req.SeasonIDs)
+		h.deleteSeasons(c, ctx, client, req.EmbyItemID, req.Seasons, req.SeasonIDs)
 	}
 }
 
 // deleteMovie 删除电影
 func (h *QuickDeleteHandler) deleteMovie(c *gin.Context, ctx context.Context, client *emby.Client, itemID string) {
+	// 先从本地缓存获取名称
+	var mc model.MediaCache
+	movieName := itemID
+	if err := h.DB.Where("emby_item_id = ?", itemID).First(&mc).Error; err == nil {
+		movieName = mc.Name
+	}
+
 	// 调用 Emby API 删除
 	if err := client.DeleteItem(ctx, itemID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "删除失败: " + err.Error()})
 		return
 	}
 
-	// 清理本地缓存
+	// 清理本地缓存和扫描结果
 	h.DB.Where("emby_item_id = ?", itemID).Delete(&model.MediaCache{})
-	log.Printf("🗑️ 快速删除电影: %s", itemID)
+	h.DB.Where("emby_item_id = ?", itemID).Delete(&model.ScrapeAnomaly{})
+	h.DB.Where("emby_item_id = ?", itemID).Delete(&model.DuplicateMedia{})
+	log.Printf("🗑️ 快速删除电影: %s (ID: %s)", movieName, itemID)
 
 	c.JSON(http.StatusOK, gin.H{"message": "ok", "deleted_count": 1, "failed": []string{}})
 }
 
 // deleteSeries 删除整个剧集
 func (h *QuickDeleteHandler) deleteSeries(c *gin.Context, ctx context.Context, client *emby.Client, itemID string) {
+	// 先从本地缓存获取名称
+	var mc model.MediaCache
+	seriesName := itemID
+	if err := h.DB.Where("emby_item_id = ?", itemID).First(&mc).Error; err == nil {
+		seriesName = mc.Name
+	}
+
+	// 统计关联的 Episode 和 Season 数量
+	var episodeCount, seasonCount int64
+	h.DB.Model(&model.MediaCache{}).Where("series_id = ?", itemID).Count(&episodeCount)
+	h.DB.Model(&model.SeasonCache{}).Where("series_emby_item_id = ?", itemID).Count(&seasonCount)
+
 	// 调用 Emby API 删除整个 Series
 	if err := client.DeleteItem(ctx, itemID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "删除失败: " + err.Error()})
@@ -268,42 +296,81 @@ func (h *QuickDeleteHandler) deleteSeries(c *gin.Context, ctx context.Context, c
 	h.DB.Where("emby_item_id = ?", itemID).Delete(&model.MediaCache{})
 	h.DB.Where("series_id = ?", itemID).Delete(&model.MediaCache{})
 	h.DB.Where("series_emby_item_id = ?", itemID).Delete(&model.SeasonCache{})
-	log.Printf("🗑️ 快速删除剧集: %s（含关联 Episode 和 Season 缓存）", itemID)
+	// 清理扫描结果表
+	h.DB.Where("emby_item_id = ?", itemID).Delete(&model.ScrapeAnomaly{})
+	h.DB.Where("emby_item_id = ?", itemID).Delete(&model.DuplicateMedia{})
+	h.DB.Where("emby_item_id = ?", itemID).Delete(&model.EpisodeMappingAnomaly{})
+	log.Printf("🗑️ 快速删除剧集: %s (ID: %s, 清理: %d 集 %d 季)", seriesName, itemID, episodeCount, seasonCount)
 
 	c.JSON(http.StatusOK, gin.H{"message": "ok", "deleted_count": 1, "failed": []string{}})
 }
 
 // deleteSeasons 删除指定的季
-func (h *QuickDeleteHandler) deleteSeasons(c *gin.Context, ctx context.Context, client *emby.Client, seriesID string, seasonIDs []string) {
-	if len(seasonIDs) == 0 {
+func (h *QuickDeleteHandler) deleteSeasons(c *gin.Context, ctx context.Context, client *emby.Client, seriesID string, seasons []seasonDeleteReq, legacySeasonIDs []string) {
+	// 兼容旧版：如果 seasons 为空但 season_ids 有值，转换为新格式
+	if len(seasons) == 0 && len(legacySeasonIDs) > 0 {
+		for _, id := range legacySeasonIDs {
+			seasons = append(seasons, seasonDeleteReq{ID: id})
+		}
+	}
+
+	if len(seasons) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "请选择要删除的季"})
 		return
+	}
+
+	// 获取剧集名称
+	var seriesMC model.MediaCache
+	seriesName := seriesID
+	if err := h.DB.Where("emby_item_id = ?", seriesID).First(&seriesMC).Error; err == nil {
+		seriesName = seriesMC.Name
 	}
 
 	deletedCount := 0
 	failed := make([]string, 0)
 
-	for _, seasonID := range seasonIDs {
+	for _, season := range seasons {
+		seasonID := season.ID
+		seasonNumber := season.SeasonNumber
+
+		// 如果前端没传季号，尝试从 SeasonCache 获取
+		if seasonNumber == 0 {
+			var sc model.SeasonCache
+			// 先用真实 Emby Season ID 查
+			if err := h.DB.Where("season_emby_item_id = ?", seasonID).First(&sc).Error; err == nil {
+				seasonNumber = sc.SeasonNumber
+			}
+		}
+
+		// 统计该季下的 Episode 数量
+		var episodeCount int64
+		if seasonNumber > 0 {
+			h.DB.Model(&model.MediaCache{}).Where("series_id = ? AND parent_index_number = ?", seriesID, seasonNumber).Count(&episodeCount)
+		}
+
 		// 调用 Emby API 删除该季
 		if err := client.DeleteItem(ctx, seasonID); err != nil {
-			log.Printf("❌ 删除季失败 [%s]: %v", seasonID, err)
+			log.Printf("❌ 删除季失败: %s S%02d (ID: %s): %v", seriesName, seasonNumber, seasonID, err)
 			failed = append(failed, seasonID)
 			continue
 		}
 
-		// 清理本地缓存：SeasonCache + 该季下的 Episode
+		// 清理本地缓存
+		if seasonNumber > 0 {
+			// 删除该季下的所有 Episode
+			h.DB.Where("series_id = ? AND parent_index_number = ?", seriesID, seasonNumber).Delete(&model.MediaCache{})
+		}
+		// 删除 SeasonCache（兼容真实 ID 和合成 ID 两种格式）
 		h.DB.Where("season_emby_item_id = ?", seasonID).Delete(&model.SeasonCache{})
-		// Episode 的 ParentIndexNumber 对应季号，但我们用 SeriesID + 季的 Emby ID 来关联
-		// 由于 Episode 缓存中没有直接的 SeasonID 字段，通过 Emby API 获取该季下的 Episode 再删除
-		// 简化处理：直接通过 series_id 和 parent_index_number 来匹配
-		// 先获取该季的季号
-		var seasonCache model.SeasonCache
-		if err := h.DB.Where("season_emby_item_id = ?", seasonID).First(&seasonCache).Error; err == nil {
-			h.DB.Where("series_id = ? AND parent_index_number = ?", seriesID, seasonCache.SeasonNumber).Delete(&model.MediaCache{})
+		if seasonNumber > 0 {
+			syntheticID := fmt.Sprintf("%s_S%d", seriesID, seasonNumber)
+			h.DB.Where("season_emby_item_id = ?", syntheticID).Delete(&model.SeasonCache{})
+			// 清理该季的异常映射记录
+			h.DB.Where("emby_item_id = ? AND season_number = ?", seriesID, seasonNumber).Delete(&model.EpisodeMappingAnomaly{})
 		}
 
 		deletedCount++
-		log.Printf("🗑️ 快速删除季: %s (Series: %s)", seasonID, seriesID)
+		log.Printf("🗑️ 快速删除季: %s S%02d (ID: %s, 清理: %d 集)", seriesName, seasonNumber, seasonID, episodeCount)
 	}
 
 	c.JSON(http.StatusOK, gin.H{

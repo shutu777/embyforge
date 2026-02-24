@@ -70,60 +70,73 @@ func (h *EmbyWebhookHandler) HandleEmbyWebhook(c *gin.Context) {
 
 	// 过滤非相关 item 类型
 	if !service.IsRelevantItemType(event.ItemType) {
-		log.Printf("📡 Webhook: 忽略 [%s] %s (Type=%s)", event.EventType, event.ItemName, event.ItemType)
+		log.Printf("📡 Webhook: 忽略 [%s] %s (类型: %s, ID: %s) - 非媒体类型",
+			event.EventType, event.ItemName, event.ItemType, event.ItemID)
 		c.JSON(http.StatusOK, gin.H{"status": "ignored", "reason": "irrelevant item type"})
 		return
 	}
 
 	// 判断操作类型
-	var operation string
+	var operation, opLabel string
 	if service.IsAddEvent(event.EventType) {
 		operation = "add"
+		opLabel = "新增"
 	} else if service.IsDeleteEvent(event.EventType) {
 		operation = "delete"
+		opLabel = "删除"
 	} else {
-		log.Printf("📡 Webhook: 忽略 [%s] %s", event.EventType, event.ItemName)
+		log.Printf("📡 Webhook: 忽略 [%s] %s (类型: %s, ID: %s) - 未识别的事件",
+			event.EventType, event.ItemName, event.ItemType, event.ItemID)
 		c.JSON(http.StatusOK, gin.H{"status": "ignored", "reason": "unrecognized event type"})
 		return
 	}
 
 	// 入队到 EventBuffer
 	h.EventBuffer.Add(&service.BufferedEvent{
-		ItemID:    event.ItemID,
-		ItemType:  event.ItemType,
-		ItemName:  event.ItemName,
-		Operation: operation,
-		Timestamp: time.Now(),
+		ItemID:     event.ItemID,
+		ItemType:   event.ItemType,
+		ItemName:   event.ItemName,
+		SeriesID:   event.SeriesID,
+		SeriesName: event.SeriesName,
+		Operation:  operation,
+		Timestamp:  time.Now(),
 	})
 
-	// 构建日志中的来源描述
-	var source string
+	// 构建单行日志
+	var desc string
 	switch event.ItemType {
 	case "Movie":
 		if event.Year > 0 {
-			source = fmt.Sprintf("🎬 %s (%d)", event.ItemName, event.Year)
+			desc = fmt.Sprintf("🎬 %s (%d)", event.ItemName, event.Year)
 		} else {
-			source = fmt.Sprintf("🎬 %s", event.ItemName)
+			desc = fmt.Sprintf("🎬 %s", event.ItemName)
 		}
 	case "Episode":
 		if event.SeriesName != "" && event.ParentIndexNumber > 0 && event.IndexNumber > 0 {
-			source = fmt.Sprintf("📺 %s S%02dE%02d %s", event.SeriesName, event.ParentIndexNumber, event.IndexNumber, event.ItemName)
+			desc = fmt.Sprintf("📺 %s S%02dE%02d - %s", event.SeriesName, event.ParentIndexNumber, event.IndexNumber, event.ItemName)
 		} else if event.SeriesName != "" {
-			source = fmt.Sprintf("📺 %s - %s", event.SeriesName, event.ItemName)
+			desc = fmt.Sprintf("📺 %s - %s", event.SeriesName, event.ItemName)
 		} else {
-			source = fmt.Sprintf("📺 %s", event.ItemName)
+			desc = fmt.Sprintf("📺 %s", event.ItemName)
+		}
+	case "Season":
+		if event.SeriesName != "" && event.IndexNumber > 0 {
+			desc = fmt.Sprintf("📁 %s S%02d (%s)", event.SeriesName, event.IndexNumber, event.ItemName)
+		} else if event.SeriesName != "" {
+			desc = fmt.Sprintf("📁 %s - %s", event.SeriesName, event.ItemName)
+		} else {
+			desc = fmt.Sprintf("📁 %s", event.ItemName)
 		}
 	case "Series":
 		if event.Year > 0 {
-			source = fmt.Sprintf("📺 %s (%d)", event.ItemName, event.Year)
+			desc = fmt.Sprintf("📺 %s (%d)", event.ItemName, event.Year)
 		} else {
-			source = fmt.Sprintf("📺 %s", event.ItemName)
+			desc = fmt.Sprintf("📺 %s", event.ItemName)
 		}
-	default:
-		source = event.ItemName
 	}
 
-	log.Printf("📡 Webhook: [%s] %s (ID=%s, 缓冲: %d)", operation, source, event.ItemID, h.EventBuffer.PendingCount())
+	log.Printf("📡 Webhook: [%s] %s (ID: %s, 缓冲: %d)", opLabel, desc, event.ItemID, h.EventBuffer.PendingCount())
+
 	c.JSON(http.StatusOK, gin.H{"status": "queued", "operation": operation})
 }
 

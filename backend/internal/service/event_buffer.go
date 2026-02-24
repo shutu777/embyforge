@@ -9,11 +9,13 @@ import (
 
 // BufferedEvent 缓冲中的单个事件
 type BufferedEvent struct {
-	ItemID    string
-	ItemType  string
-	ItemName  string
-	Operation string    // "add" 或 "delete"
-	Timestamp time.Time
+	ItemID     string
+	ItemType   string
+	ItemName   string
+	SeriesID   string // 所属 Series 的 Emby ID（Episode/Season 有值）
+	SeriesName string // 所属 Series 名称
+	Operation  string // "add" 或 "delete"
+	Timestamp  time.Time
 }
 
 // EventBuffer 事件缓冲器，负责去抖和批量处理

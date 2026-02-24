@@ -10,10 +10,11 @@ import (
 type EmbyWebhookEvent struct {
 	EventType         string `json:"event_type"`          // "library.new", "library.deleted", "item.add", "item.remove" 等
 	ItemID            string `json:"item_id"`             // Emby 媒体条目 ID
-	ItemType          string `json:"item_type"`           // "Movie", "Series", "Episode"
+	ItemType          string `json:"item_type"`           // "Movie", "Series", "Season", "Episode"
 	ItemName          string `json:"item_name"`           // 媒体名称（集名/电影名）
-	SeriesName        string `json:"series_name"`         // 所属剧集名称（仅 Episode 有值）
-	ParentIndexNumber int    `json:"parent_index_number"` // 季号（仅 Episode 有值）
+	SeriesID          string `json:"series_id"`           // 所属 Series 的 Emby ID（Episode/Season 有值）
+	SeriesName        string `json:"series_name"`         // 所属剧集名称（Episode/Season 有值）
+	ParentIndexNumber int    `json:"parent_index_number"` // 季号（Episode 有值）
 	IndexNumber       int    `json:"index_number"`        // 集号（仅 Episode 有值）
 	Year              int    `json:"year"`                // 年份（电影/剧集）
 }
@@ -77,6 +78,7 @@ func ParseEmbyWebhookPayload(payload []byte) (*EmbyWebhookEvent, error) {
 		ItemID:            p.Item.ID,
 		ItemType:          p.Item.Type,
 		ItemName:          p.Item.Name,
+		SeriesID:          p.Item.SeriesID,
 		SeriesName:        p.Item.SeriesName,
 		ParentIndexNumber: p.Item.ParentIndexNumber,
 		IndexNumber:       p.Item.IndexNumber,
@@ -89,10 +91,10 @@ func FormatEmbyWebhookEvent(event *EmbyWebhookEvent) string {
 	return fmt.Sprintf("[%s] %s (ID=%s, Type=%s)", event.EventType, event.ItemName, event.ItemID, event.ItemType)
 }
 
-// IsRelevantItemType 判断 item 类型是否需要处理（Movie/Series/Episode）
+// IsRelevantItemType 判断 item 类型是否需要处理（Movie/Series/Season/Episode）
 func IsRelevantItemType(itemType string) bool {
 	switch itemType {
-	case "Movie", "Series", "Episode":
+	case "Movie", "Series", "Season", "Episode":
 		return true
 	default:
 		return false

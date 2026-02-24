@@ -96,6 +96,9 @@ async function confirmDelete() {
       emby_item_id: deleteTarget.value.Id,
       type: deleteScope.value,
       season_ids: deleteScope.value === 'season' ? selectedSeasons.value : [],
+      seasons: deleteScope.value === 'season'
+        ? seasons.value.filter(s => selectedSeasons.value.includes(s.id)).map(s => ({ id: s.id, season_number: s.season_number }))
+        : [],
     }
     const { data } = await api.post('/quick-delete/delete', body)
     if (data.failed && data.failed.length > 0) {

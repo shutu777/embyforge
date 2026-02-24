@@ -22,7 +22,7 @@ const isIndeterminate = computed(() => syncProgress.value && syncProgress.value.
 
 // Webhook 配置
 const pendingEvents = ref(0)
-const webhookUrl = ref('')
+const webhookUrl = ref('/api/webhook/emby')
 
 function copyWebhookUrl() {
   navigator.clipboard.writeText(webhookUrl.value).then(() => {
@@ -58,9 +58,6 @@ async function fetchCacheStatus() {
     const { data } = await api.get('/cache/status')
     cacheStatus.value = data.data
     pendingEvents.value = data.pending_events || 0
-    if (data.webhook_url) {
-      webhookUrl.value = data.webhook_url
-    }
   } catch (e) {
     console.error('获取缓存状态失败', e)
   } finally {
@@ -407,7 +404,7 @@ onBeforeUnmount(closeSSE)
             <li>添加一个新的 Webhook 通知</li>
             <li>将上方的 Webhook 地址填入 URL 字段</li>
             <li>Request Content Type 选择 <strong>application/json</strong></li>
-            <li>勾选 <strong>新媒体入库</strong> 和 <strong>媒体已移除</strong> 事件</li>
+            <li>勾选 <strong>媒体库全部事件</strong></li>
             <li>保存配置即可，后续媒体库变更会自动推送到 EmbyForge</li>
           </ol>
           <VAlert type="warning" variant="tonal" density="compact">

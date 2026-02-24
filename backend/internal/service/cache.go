@@ -73,7 +73,7 @@ func (s *CacheService) SyncMediaCacheWithContext(ctx context.Context, client *em
 	result := &SyncResult{}
 
 	// 内存去重集合，Emby API 跨页可能返回重复 item
-	seen := make(map[string]bool, 300000)
+	seen := make(map[string]bool, 50000)
 	// 内存缓冲区，攒够 syncBatchSize 条后批量写入
 	buffer := make([]model.MediaCache, 0, syncBatchSize)
 
@@ -158,6 +158,9 @@ func (s *CacheService) SyncMediaCacheWithContext(ctx context.Context, client *em
 	log.Printf("✅ 媒体缓存同步完成: %d 个媒体条目, %d 个季, 耗时 %dms",
 		result.TotalItems, result.TotalSeasons, result.ElapsedMs)
 
+	// 主动释放同步过程中分配的大量内存（seen map、buffer 等）
+	debug.FreeOSMemory()
+
 	return result, nil
 }
 
@@ -229,7 +232,7 @@ func (s *CacheService) SyncMediaCacheWithProgress(ctx context.Context, client *e
 	result := &SyncResult{}
 
 	// 内存去重集合
-	seen := make(map[string]bool, 300000)
+	seen := make(map[string]bool, 50000)
 
 	// 流水线：writeCh 连接 API 拉取和 DB 写入
 	type writeBatch struct {

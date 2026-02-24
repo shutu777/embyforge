@@ -33,8 +33,11 @@ const cleaning = ref(false)
 const cleanResult = ref(null)
 const showCleanDialog = ref(false)
 const loadingPreview = ref(false)
-const previewGroups = ref([])    // 按组返回的预览数据
+const previewGroups = ref([])    // 当前页的预览数据
 const selectedItems = ref([])    // 选中要删除的 emby_item_id 集合
+const previewPage = ref(1)
+const previewPageSize = ref(50)
+const previewTotalGroups = ref(0)
 
 // Emby 配置（由 useEmbyUrl 全局管理）
 
@@ -64,7 +67,7 @@ const dupGroupCount = computed(() => {
   return analysisStatus.value?.duplicate_media?.anomaly_count || 0
 })
 
-// 所有可删除的条目（should_delete 标记的）
+// 当前页可删除的条目（should_delete 标记的）
 const allDeletableItems = computed(() => {
   return previewGroups.value.flatMap(g => g.items.filter(i => i.should_delete))
 })
@@ -204,17 +207,30 @@ function onPageChange(newPage) {
 
 // 打开清理预览对话框
 async function openCleanDialog() {
-  loadingPreview.value = true
   showCleanDialog.value = true
-  previewGroups.value = []
+  previewPage.value = 1
   selectedItems.value = []
+  await fetchPreviewPage()
+}
+
+// 获取预览分页数据
+async function fetchPreviewPage() {
+  loadingPreview.value = true
+  previewGroups.value = []
   try {
-    const { data } = await api.get('/cleanup/duplicate-media/preview')
+    const { data } = await api.get('/cleanup/duplicate-media/preview', {
+      params: { page: previewPage.value, pageSize: previewPageSize.value },
+    })
     previewGroups.value = data.data || []
-    // 默认选中所有 should_delete 的条目
-    selectedItems.value = previewGroups.value
+    previewTotalGroups.value = data.total_groups || 0
+    // 默认选中当前页所有 should_delete 的条目（保留之前页的选择）
+    const pageDeleteIds = previewGroups.value
       .flatMap(g => g.items.filter(i => i.should_delete))
       .map(i => i.emby_item_id)
+    // 合并到已选集合（去重）
+    const existingSet = new Set(selectedItems.value)
+    pageDeleteIds.forEach(id => existingSet.add(id))
+    selectedItems.value = [...existingSet]
   } catch (e) {
     snackbar.error('获取待清理列表失败')
     showCleanDialog.value = false
@@ -223,13 +239,25 @@ async function openCleanDialog() {
   }
 }
 
-// 全选/取消全选（只操作 should_delete 的条目）
+// 预览分页变化
+function onPreviewPageChange(newPage) {
+  previewPage.value = newPage
+  fetchPreviewPage()
+}
+
+// 全选/取消全选当前页（只操作 should_delete 的条目）
 function toggleSelectAll() {
-  const allIds = allDeletableItems.value.map(i => i.emby_item_id)
-  if (selectedItems.value.length === allIds.length) {
-    selectedItems.value = []
+  const pageIds = allDeletableItems.value.map(i => i.emby_item_id)
+  const allSelected = pageIds.every(id => selectedItems.value.includes(id))
+  if (allSelected) {
+    // 取消当前页的选择
+    const pageSet = new Set(pageIds)
+    selectedItems.value = selectedItems.value.filter(id => !pageSet.has(id))
   } else {
-    selectedItems.value = [...allIds]
+    // 选中当前页所有
+    const existingSet = new Set(selectedItems.value)
+    pageIds.forEach(id => existingSet.add(id))
+    selectedItems.value = [...existingSet]
   }
 }
 
@@ -586,9 +614,9 @@ onMounted(async () => {
               <div class="d-flex align-center justify-space-between">
                 <div class="d-flex align-center">
                   <VCheckbox
-                    :model-value="selectedItems.length === allDeletableItems.length && allDeletableItems.length > 0"
-                    :indeterminate="selectedItems.length > 0 && selectedItems.length < allDeletableItems.length"
-                    label="全选默认项"
+                    :model-value="selectedItems.length > 0 && allDeletableItems.every(i => selectedItems.includes(i.emby_item_id))"
+                    :indeterminate="allDeletableItems.some(i => selectedItems.includes(i.emby_item_id)) && !allDeletableItems.every(i => selectedItems.includes(i.emby_item_id))"
+                    label="全选当前页"
                     density="compact"
                     hide-details
                     @click="toggleSelectAll"
@@ -664,7 +692,16 @@ onMounted(async () => {
 
         <VDivider />
 
-        <VCardActions class="pa-4 px-5">
+        <!-- 分页 + 操作按钮 -->
+        <VCardActions class="pa-4 px-5 d-flex align-center">
+          <VPagination
+            v-if="previewTotalGroups > previewPageSize"
+            v-model="previewPage"
+            :length="Math.ceil(previewTotalGroups / previewPageSize)"
+            density="compact"
+            size="small"
+            @update:model-value="onPreviewPageChange"
+          />
           <VSpacer />
           <VBtn variant="text" @click="showCleanDialog = false">取消</VBtn>
           <VBtn

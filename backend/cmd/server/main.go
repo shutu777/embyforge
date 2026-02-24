@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -184,35 +183,34 @@ func main() {
 	cacheHandler := handler.NewCacheHandler(db, cfg.JWTSecret, syncLock, eventBuffer)
 	embyWebhookHandler := handler.NewEmbyWebhookHandler(eventBuffer)
 
-	// 从数据库读取 cron 同步间隔配置
-	cronIntervalHours := 1
+	// 从数据库读取 cron 表达式配置
+	cronExpr := service.DefaultCronExpr
 	var cronConfig model.SystemConfig
-	if err := db.Where("`key` = ?", "cron_sync_interval_hours").First(&cronConfig).Error; err != nil {
-		// 不存在则创建默认配置
+	if err := db.Where("`key` = ?", "cron_sync_expr").First(&cronConfig).Error; err != nil {
+		// 不存在则创建默认配置；同时清理旧的 interval_hours 配置
 		db.Create(&model.SystemConfig{
-			Key:         "cron_sync_interval_hours",
-			Value:       "1",
-			Description: "定时全量同步间隔（小时，范围 1-168）",
+			Key:         "cron_sync_expr",
+			Value:       service.DefaultCronExpr,
+			Description: "定时全量同步 Cron 表达式（如 0 */2 * * * 表示每2小时）",
 		})
+		db.Where("`key` = ?", "cron_sync_interval_hours").Delete(&model.SystemConfig{})
 	} else {
-		if v, err := strconv.Atoi(cronConfig.Value); err == nil {
-			cronIntervalHours = v
+		if cronConfig.Value != "" {
+			cronExpr = cronConfig.Value
 		}
 	}
 
 	// 创建并启动 CronScheduler
-	cronScheduler := service.NewCronScheduler(cronIntervalHours, syncLock, cacheService, eventBuffer, getEmbyClient)
+	cronScheduler := service.NewCronScheduler(cronExpr, syncLock, cacheService, eventBuffer, getEmbyClient)
 	cronScheduler.Start()
 
 	dashboardHandler := handler.NewDashboardHandler(db)
 	profileHandler := handler.NewProfileHandler(db, filepath.Dir(cfg.DBPath))
 	systemConfigHandler := handler.NewSystemConfigHandler(db)
-	// 配置更新回调：cron 间隔变更时热更新调度器
+	// 配置更新回调：cron 表达式变更时热更新调度器
 	systemConfigHandler.OnConfigUpdate = func(key, value string) {
-		if key == "cron_sync_interval_hours" {
-			if v, err := strconv.Atoi(value); err == nil {
-				cronScheduler.UpdateInterval(v)
-			}
+		if key == "cron_sync_expr" {
+			cronScheduler.UpdateCronExpr(value)
 		}
 	}
 	logsHandler := handler.NewLogsHandler(logBuffer)

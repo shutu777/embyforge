@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"regexp"
+	"runtime/debug"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -469,7 +470,7 @@ func (s *ScanService) AnalyzeScrapeAnomaliesFromCache() (*ScanResult, error) {
 }
 
 // AnalyzeDuplicateMediaFromCache 基于缓存数据分析重复媒体
-// 从 media_cache 读取数据，转换为 MediaItem，调用 DetectDuplicateMedia
+// 使用 SQL 聚合直接在数据库中检测重复，避免将全部缓存加载到内存
 func (s *ScanService) AnalyzeDuplicateMediaFromCache() (*ScanResult, error) {
 	startedAt := time.Now()
 
@@ -481,37 +482,138 @@ func (s *ScanService) AnalyzeDuplicateMediaFromCache() (*ScanResult, error) {
 		log.Printf("重置主键序列（可忽略）: %v", err)
 	}
 
-	// 从缓存读取所有媒体条目
-	var caches []model.MediaCache
-	if err := s.DB.Find(&caches).Error; err != nil {
-		return nil, fmt.Errorf("读取媒体缓存失败: %w", err)
-	}
-
-	// 转换为 MediaItem
-	items := make([]emby.MediaItem, len(caches))
-	for i, c := range caches {
-		items[i] = c.ToMediaItem()
-	}
-
-	// 调用纯逻辑函数检测重复
-	duplicates := DetectDuplicateMedia(items)
+	// 统计总条目数
+	var totalCount int64
+	s.DB.Model(&model.MediaCache{}).Count(&totalCount)
 
 	result := &ScanResult{
-		TotalScanned: len(items),
+		TotalScanned: int(totalCount),
 	}
 
-	// 分批写入数据库（每批 500 条）
-	if len(duplicates) > 0 {
-		if err := batchCreateInDB(s.DB, duplicates, 500); err != nil {
-			log.Printf("⚠️ 分批写入重复媒体失败: %v", err)
-			result.ErrorCount++
-			return result, err
-		}
-		result.AnomalyCount = len(duplicates)
+	// 电影重复检测：按 TMDB ID 分组，找出有多个条目的组
+	// 使用 SQL 直接插入，避免加载到内存
+	movieSQL := `
+		INSERT INTO duplicate_media (group_key, group_name, emby_item_id, name, type, path, file_size)
+		SELECT
+			'tmdb:movie:' || json_extract(mc.provider_ids, '$.Tmdb') AS group_key,
+			mc.name AS group_name,
+			mc.emby_item_id,
+			mc.name,
+			mc.type,
+			mc.path,
+			mc.file_size
+		FROM media_caches mc
+		WHERE mc.type = 'Movie'
+			AND json_extract(mc.provider_ids, '$.Tmdb') IS NOT NULL
+			AND json_extract(mc.provider_ids, '$.Tmdb') != ''
+			AND json_extract(mc.provider_ids, '$.Tmdb') IN (
+				SELECT json_extract(m2.provider_ids, '$.Tmdb')
+				FROM media_caches m2
+				WHERE m2.type = 'Movie'
+					AND json_extract(m2.provider_ids, '$.Tmdb') IS NOT NULL
+					AND json_extract(m2.provider_ids, '$.Tmdb') != ''
+				GROUP BY json_extract(m2.provider_ids, '$.Tmdb')
+				HAVING COUNT(*) >= 2
+			)
+	`
+	if err := s.DB.Exec(movieSQL).Error; err != nil {
+		log.Printf("⚠️ SQL 检测电影重复失败: %v", err)
+		result.ErrorCount++
 	}
+
+	// 更新电影分组名：每组取第一个条目的名称
+	s.DB.Exec(`
+		UPDATE duplicate_media SET group_name = (
+			SELECT d2.name FROM duplicate_media d2
+			WHERE d2.group_key = duplicate_media.group_key
+			ORDER BY d2.id ASC LIMIT 1
+		) WHERE group_key LIKE 'tmdb:movie:%'
+	`)
+
+	// 剧集重复检测：同一 series_id + 同季同集有多个 Episode
+	// 季号从路径提取优先，回退到 parent_index_number
+	// 集号从文件名提取优先，回退到 index_number
+	episodeSQL := `
+		INSERT INTO duplicate_media (group_key, group_name, emby_item_id, name, type, path, file_size)
+		SELECT
+			'series:' || mc.series_id || ':S' || 
+				COALESCE(CAST(
+					CASE WHEN mc.path LIKE '%/Season %/%' OR mc.path LIKE '%\Season %\%'
+					THEN CAST(SUBSTR(mc.path, 
+						INSTR(LOWER(mc.path), 'season ') + 7,
+						INSTR(SUBSTR(mc.path, INSTR(LOWER(mc.path), 'season ') + 7), '/') - 1
+					) AS INTEGER)
+					ELSE mc.parent_index_number END
+				AS TEXT), CAST(mc.parent_index_number AS TEXT))
+			|| 'E' || CAST(mc.index_number AS TEXT) AS group_key,
+			mc.series_name || ' S' || 
+				COALESCE(CAST(
+					CASE WHEN mc.path LIKE '%/Season %/%' OR mc.path LIKE '%\Season %\%'
+					THEN CAST(SUBSTR(mc.path, 
+						INSTR(LOWER(mc.path), 'season ') + 7,
+						INSTR(SUBSTR(mc.path, INSTR(LOWER(mc.path), 'season ') + 7), '/') - 1
+					) AS INTEGER)
+					ELSE mc.parent_index_number END
+				AS TEXT), CAST(mc.parent_index_number AS TEXT))
+			|| 'E' || CAST(mc.index_number AS TEXT) AS group_name,
+			mc.emby_item_id,
+			mc.name,
+			mc.type,
+			mc.path,
+			mc.file_size
+		FROM media_caches mc
+		WHERE mc.type = 'Episode'
+			AND mc.series_id != ''
+			AND ('series:' || mc.series_id || ':S' || 
+				COALESCE(CAST(
+					CASE WHEN mc.path LIKE '%/Season %/%' OR mc.path LIKE '%\Season %\%'
+					THEN CAST(SUBSTR(mc.path, 
+						INSTR(LOWER(mc.path), 'season ') + 7,
+						INSTR(SUBSTR(mc.path, INSTR(LOWER(mc.path), 'season ') + 7), '/') - 1
+					) AS INTEGER)
+					ELSE mc.parent_index_number END
+				AS TEXT), CAST(mc.parent_index_number AS TEXT))
+			|| 'E' || CAST(mc.index_number AS TEXT)) IN (
+				SELECT 'series:' || m2.series_id || ':S' || 
+					COALESCE(CAST(
+						CASE WHEN m2.path LIKE '%/Season %/%' OR m2.path LIKE '%\Season %\%'
+						THEN CAST(SUBSTR(m2.path, 
+							INSTR(LOWER(m2.path), 'season ') + 7,
+							INSTR(SUBSTR(m2.path, INSTR(LOWER(m2.path), 'season ') + 7), '/') - 1
+						) AS INTEGER)
+						ELSE m2.parent_index_number END
+					AS TEXT), CAST(m2.parent_index_number AS TEXT))
+				|| 'E' || CAST(m2.index_number AS TEXT)
+				FROM media_caches m2
+				WHERE m2.type = 'Episode' AND m2.series_id != ''
+				GROUP BY m2.series_id, 
+					COALESCE(CAST(
+						CASE WHEN m2.path LIKE '%/Season %/%' OR m2.path LIKE '%\Season %\%'
+						THEN CAST(SUBSTR(m2.path, 
+							INSTR(LOWER(m2.path), 'season ') + 7,
+							INSTR(SUBSTR(m2.path, INSTR(LOWER(m2.path), 'season ') + 7), '/') - 1
+						) AS INTEGER)
+						ELSE m2.parent_index_number END
+					AS TEXT), CAST(m2.parent_index_number AS TEXT)),
+					m2.index_number
+				HAVING COUNT(*) >= 2
+			)
+	`
+	if err := s.DB.Exec(episodeSQL).Error; err != nil {
+		log.Printf("⚠️ SQL 检测剧集重复失败: %v", err)
+		result.ErrorCount++
+	}
+
+	// 统计重复条目数
+	var dupCount int64
+	s.DB.Model(&model.DuplicateMedia{}).Count(&dupCount)
+	result.AnomalyCount = int(dupCount)
 
 	// 记录执行日志
 	s.saveScanLog("duplicate_media", startedAt, result)
+
+	// 主动释放内存
+	debug.FreeOSMemory()
 
 	return result, nil
 }

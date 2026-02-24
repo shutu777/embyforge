@@ -552,29 +552,62 @@ func (h *ScanHandler) CleanupDuplicateMedia(c *gin.Context) {
 }
 
 // PreviewDuplicateCleanup GET /api/cleanup/duplicate-media/preview - 预览待清理的重复媒体
-// 返回所有重复组，每组包含全部条目，并标记建议删除的（体积较小的）
+// 支持分页参数 page 和 pageSize，返回分页后的重复组
 func (h *ScanHandler) PreviewDuplicateCleanup(c *gin.Context) {
-	// 获取所有重复媒体记录，按分组和文件大小升序排序
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "50"))
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 200 {
+		pageSize = 50
+	}
+
+	// 获取重复分组总数
+	type groupInfo struct {
+		GroupKey  string `json:"group_key"`
+		GroupName string `json:"group_name"`
+	}
+	var totalGroups int64
+	h.DB.Model(&model.DuplicateMedia{}).Select("DISTINCT group_key").Count(&totalGroups)
+
+	// 分页获取分组键
+	var groups []groupInfo
+	offset := (page - 1) * pageSize
+	h.DB.Model(&model.DuplicateMedia{}).
+		Select("group_key, MAX(group_name) as group_name").
+		Group("group_key").
+		Order("group_key ASC").
+		Offset(offset).
+		Limit(pageSize).
+		Find(&groups)
+
+	groupKeys := make([]string, len(groups))
+	groupNameMap := make(map[string]string)
+	for i, g := range groups {
+		groupKeys[i] = g.GroupKey
+		groupNameMap[g.GroupKey] = g.GroupName
+	}
+
+	// 获取这些分组下的所有记录
 	var duplicates []model.DuplicateMedia
-	h.DB.Order("group_key ASC, file_size ASC").Find(&duplicates)
+	if len(groupKeys) > 0 {
+		h.DB.Where("group_key IN ?", groupKeys).Order("group_key ASC, file_size ASC").Find(&duplicates)
+	}
 
 	// 按 group_key 分组
-	groups := make(map[string][]model.DuplicateMedia)
-	var groupOrder []string
+	itemsByKey := make(map[string][]model.DuplicateMedia)
 	for _, d := range duplicates {
-		if _, exists := groups[d.GroupKey]; !exists {
-			groupOrder = append(groupOrder, d.GroupKey)
-		}
-		groups[d.GroupKey] = append(groups[d.GroupKey], d)
+		itemsByKey[d.GroupKey] = append(itemsByKey[d.GroupKey], d)
 	}
 
 	type previewItem struct {
-		EmbyItemID    string `json:"emby_item_id"`
-		Name          string `json:"name"`
-		Type          string `json:"type"`
-		Path          string `json:"path"`
-		FileSize      int64  `json:"file_size"`
-		ShouldDelete  bool   `json:"should_delete"` // 建议删除（体积较小的）
+		EmbyItemID   string `json:"emby_item_id"`
+		Name         string `json:"name"`
+		Type         string `json:"type"`
+		Path         string `json:"path"`
+		FileSize     int64  `json:"file_size"`
+		ShouldDelete bool   `json:"should_delete"`
 	}
 
 	type previewGroup struct {
@@ -587,22 +620,20 @@ func (h *ScanHandler) PreviewDuplicateCleanup(c *gin.Context) {
 	totalDeleteCount := 0
 	var totalFreedSize int64
 
-	for _, key := range groupOrder {
-		groupItems := groups[key]
+	for _, g := range groups {
+		groupItems := itemsByKey[g.GroupKey]
 		if len(groupItems) < 2 {
 			continue
 		}
 
 		pg := previewGroup{
-			GroupKey:  key,
-			GroupName: groupItems[0].GroupName,
+			GroupKey:  g.GroupKey,
+			GroupName: g.GroupName,
 		}
 
-		// 按文件大小升序排列，保留最后一个（体积最大的），其余建议删除
-		// 大小相同时默认删除排在前面的
 		lastIdx := len(groupItems) - 1
 		for i, item := range groupItems {
-			shouldDelete := i < lastIdx // 最后一个保留，其余删除
+			shouldDelete := i < lastIdx
 			pg.Items = append(pg.Items, previewItem{
 				EmbyItemID:   item.EmbyItemID,
 				Name:         item.Name,
@@ -622,7 +653,9 @@ func (h *ScanHandler) PreviewDuplicateCleanup(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"data":               result,
-		"total_groups":       len(result),
+		"total_groups":       totalGroups,
+		"page":               page,
+		"page_size":          pageSize,
 		"total_delete_count": totalDeleteCount,
 		"total_freed_size":   totalFreedSize,
 	})
@@ -696,7 +729,7 @@ func (h *ScanHandler) CleanupScrapeAnomalies(c *gin.Context) {
 		deletedCount++
 	}
 
-	// 从数据库中删除已清理的记录
+	// 从数据库中删除已清理的记录及关联数据
 	if deletedCount > 0 {
 		successIDs := make([]string, 0, deletedCount)
 		for _, id := range req.Items {
@@ -713,26 +746,10 @@ func (h *ScanHandler) CleanupScrapeAnomalies(c *gin.Context) {
 		}
 		if len(successIDs) > 0 {
 			h.DB.Where("emby_item_id IN ?", successIDs).Delete(&model.ScrapeAnomaly{})
-		}
-	}
-
-	// 同时清理 media_cache 中对应的缓存记录
-	if deletedCount > 0 {
-		successIDs := make([]string, 0, deletedCount)
-		for _, id := range req.Items {
-			isFailed := false
-			for _, fid := range failedItems {
-				if id == fid {
-					isFailed = true
-					break
-				}
-			}
-			if !isFailed {
-				successIDs = append(successIDs, id)
-			}
-		}
-		if len(successIDs) > 0 {
 			h.DB.Where("emby_item_id IN ?", successIDs).Delete(&model.MediaCache{})
+			// 跨表清理：同一条目可能同时存在于其他扫描结果表
+			h.DB.Where("emby_item_id IN ?", successIDs).Delete(&model.DuplicateMedia{})
+			h.DB.Where("emby_item_id IN ?", successIDs).Delete(&model.EpisodeMappingAnomaly{})
 		}
 	}
 

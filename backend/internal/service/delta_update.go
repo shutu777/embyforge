@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
@@ -81,6 +82,15 @@ func (s *CacheService) ProcessDeltaEvents(ctx context.Context, client *emby.Clie
 				continue
 			}
 
+			// Season 不是媒体条目，不写入 media_caches
+			// Season 的 add 事件只需要触发季缓存重建
+			if item.Type == "Season" {
+				if item.SeriesID != "" {
+					affectedSeries[item.SeriesID] = true
+				}
+				continue
+			}
+
 			cache := model.NewMediaCacheFromItem(item, "")
 			caches = append(caches, cache)
 
@@ -106,18 +116,68 @@ func (s *CacheService) ProcessDeltaEvents(ctx context.Context, client *emby.Clie
 		for _, e := range deleteEvents {
 			ids = append(ids, e.ItemID)
 
-			// 收集受影响的 Series（删除前查询本地缓存获取 SeriesID）
-			if e.ItemType == "Episode" {
+			// 收集受影响的 Series（用于重建季缓存）
+			switch e.ItemType {
+			case "Episode":
+				// 从本地缓存获取 SeriesID
 				var mc model.MediaCache
 				if err := s.DB.Where("emby_item_id = ?", e.ItemID).First(&mc).Error; err == nil {
 					if mc.SeriesID != "" {
 						affectedSeries[mc.SeriesID] = true
 					}
 				}
+				// 清理该集的重复媒体记录
+				s.DB.Where("emby_item_id = ?", e.ItemID).Delete(&model.DuplicateMedia{})
+			case "Season":
+				// Season 删除：清理该季下的所有 Episode 缓存和 SeasonCache
+				seriesID := e.SeriesID
+				if seriesID != "" {
+					affectedSeries[seriesID] = true
+					// 尝试从 SeasonCache 获取季号（兼容真实 ID 和合成 ID）
+					var seasonNumber int
+					var sc model.SeasonCache
+					if err := s.DB.Where("season_emby_item_id = ?", e.ItemID).First(&sc).Error; err == nil {
+						seasonNumber = sc.SeasonNumber
+					}
+					if seasonNumber > 0 {
+						s.DB.Where("series_id = ? AND parent_index_number = ?", seriesID, seasonNumber).Delete(&model.MediaCache{})
+						// 清理该季的异常映射记录
+						s.DB.Where("emby_item_id = ? AND season_number = ?", seriesID, seasonNumber).Delete(&model.EpisodeMappingAnomaly{})
+						log.Printf("🗑️ 增量同步: 删除季 %s S%02d (ID: %s, Series: %s)", e.ItemName, seasonNumber, e.ItemID, e.SeriesName)
+					}
+					// 删除 SeasonCache（兼容真实 ID 和合成 ID）
+					s.DB.Where("season_emby_item_id = ?", e.ItemID).Delete(&model.SeasonCache{})
+					if seasonNumber > 0 {
+						syntheticID := fmt.Sprintf("%s_S%d", seriesID, seasonNumber)
+						s.DB.Where("season_emby_item_id = ?", syntheticID).Delete(&model.SeasonCache{})
+					}
+				} else {
+					var sc model.SeasonCache
+					if err := s.DB.Where("season_emby_item_id = ?", e.ItemID).First(&sc).Error; err == nil {
+						affectedSeries[sc.SeriesEmbyItemID] = true
+						s.DB.Where("series_id = ? AND parent_index_number = ?", sc.SeriesEmbyItemID, sc.SeasonNumber).Delete(&model.MediaCache{})
+						s.DB.Where("season_emby_item_id = ?", e.ItemID).Delete(&model.SeasonCache{})
+						syntheticID := fmt.Sprintf("%s_S%d", sc.SeriesEmbyItemID, sc.SeasonNumber)
+						s.DB.Where("season_emby_item_id = ?", syntheticID).Delete(&model.SeasonCache{})
+						// 清理该季的异常映射记录
+						s.DB.Where("emby_item_id = ? AND season_number = ?", sc.SeriesEmbyItemID, sc.SeasonNumber).Delete(&model.EpisodeMappingAnomaly{})
+						log.Printf("🗑️ 增量同步: 删除季 %s S%02d (ID: %s)", e.ItemName, sc.SeasonNumber, e.ItemID)
+					}
+				}
+			case "Series":
+				// Series 删除：清理所有关联的 Episode 和 SeasonCache
+				affectedSeries[e.ItemID] = true
+				s.DB.Where("series_id = ?", e.ItemID).Delete(&model.MediaCache{})
+				s.DB.Where("series_emby_item_id = ?", e.ItemID).Delete(&model.SeasonCache{})
+				// 清理扫描结果表
+				s.DB.Where("emby_item_id = ?", e.ItemID).Delete(&model.ScrapeAnomaly{})
+				s.DB.Where("emby_item_id = ?", e.ItemID).Delete(&model.DuplicateMedia{})
+				s.DB.Where("emby_item_id = ?", e.ItemID).Delete(&model.EpisodeMappingAnomaly{})
+				log.Printf("🗑️ 增量同步: 删除剧集 %s (ID: %s) 的所有关联缓存", e.ItemName, e.ItemID)
 			}
 		}
 
-		// 批量删除
+		// 批量删除 MediaCache（按 emby_item_id）
 		const deleteBatch = 500
 		for i := 0; i < len(ids); i += deleteBatch {
 			end := i + deleteBatch
@@ -163,17 +223,31 @@ func (s *CacheService) ReconcileBufferedEvents(ctx context.Context, client *emby
 	for _, e := range events {
 		if e.Operation == "delete" {
 			// 删除事件：检查本地是否存在，存在则保留
-			var count int64
-			s.DB.Model(&model.MediaCache{}).Where("emby_item_id = ?", e.ItemID).Count(&count)
-			if count > 0 {
-				reconciled = append(reconciled, e)
+			if e.ItemType == "Season" {
+				// Season 存在于 season_caches 表，需要单独检查
+				var count int64
+				s.DB.Model(&model.SeasonCache{}).Where("season_emby_item_id = ?", e.ItemID).Count(&count)
+				if count > 0 {
+					reconciled = append(reconciled, e)
+				}
+			} else {
+				var count int64
+				s.DB.Model(&model.MediaCache{}).Where("emby_item_id = ?", e.ItemID).Count(&count)
+				if count > 0 {
+					reconciled = append(reconciled, e)
+				}
 			}
 		} else if e.Operation == "add" {
-			// 新增事件：检查本地是否已存在，不存在则保留
-			var count int64
-			s.DB.Model(&model.MediaCache{}).Where("emby_item_id = ?", e.ItemID).Count(&count)
-			if count == 0 {
+			// 新增事件：Season 类型只需触发季缓存重建，始终保留
+			if e.ItemType == "Season" {
 				reconciled = append(reconciled, e)
+			} else {
+				// 检查本地是否已存在，不存在则保留
+				var count int64
+				s.DB.Model(&model.MediaCache{}).Where("emby_item_id = ?", e.ItemID).Count(&count)
+				if count == 0 {
+					reconciled = append(reconciled, e)
+				}
 			}
 		}
 	}

@@ -173,6 +173,8 @@ func (h *EmbyConfigHandler) TestConnection(c *gin.Context) {
 }
 
 // GetServerInfo 获取 Emby 服务器信息（后端探测可达性，返回可用的 base_url）
+// base_url 选择策略：配置了外网地址就返回外网地址（浏览器用外网访问），否则返回内网地址。
+// 探测仅用内网地址（后端在内网），确认连通性和获取 server_id。
 func (h *EmbyConfigHandler) GetServerInfo(c *gin.Context) {
 	var config model.EmbyConfig
 	if err := h.DB.First(&config).Error; err != nil {
@@ -186,43 +188,21 @@ func (h *EmbyConfigHandler) GetServerInfo(c *gin.Context) {
 
 	internalURL := fmt.Sprintf("%s:%d", config.Host, config.Port)
 
-	// 优先探测内网地址
-	serverID, _, ok := probeEmbyURL(internalURL, config.APIKey)
-	if ok {
-		c.JSON(http.StatusOK, gin.H{
-			"data": gin.H{
-				"base_url":  internalURL,
-				"server_id": serverID,
-				"api_key":   config.APIKey,
-				"connected": true,
-			},
-		})
-		return
-	}
-
-	// 内网不可达，尝试外网地址
+	// 返回给前端的 base_url：有外网地址就用外网（浏览器能访问），否则用内网
+	baseURL := internalURL
 	if config.ExternalURL != "" {
-		serverID, _, ok = probeEmbyURL(config.ExternalURL, config.APIKey)
-		if ok {
-			c.JSON(http.StatusOK, gin.H{
-				"data": gin.H{
-					"base_url":  config.ExternalURL,
-					"server_id": serverID,
-					"api_key":   config.APIKey,
-					"connected": true,
-				},
-			})
-			return
-		}
+		baseURL = config.ExternalURL
 	}
 
-	// 都不可达，回退到内网地址
+	// 用内网地址探测连通性和获取 server_id（后端在内网，不探测外网）
+	serverID, _, ok := probeEmbyURL(internalURL, config.APIKey)
+
 	c.JSON(http.StatusOK, gin.H{
 		"data": gin.H{
-			"base_url":  internalURL,
-			"server_id": "",
+			"base_url":  baseURL,
+			"server_id": serverID,
 			"api_key":   config.APIKey,
-			"connected": false,
+			"connected": ok,
 		},
 	})
 }

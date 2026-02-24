@@ -242,17 +242,9 @@ func (h *CacheHandler) GetCacheStatus(c *gin.Context) {
 		return
 	}
 
-	// 构建 Emby Webhook URL：使用请求的协议和 Host（经过反代后是正确的外部地址）
-	scheme := "http"
-	if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
-		scheme = "https"
-	}
-	webhookURL := fmt.Sprintf("%s://%s/api/webhook/emby", scheme, c.Request.Host)
-
 	c.JSON(http.StatusOK, gin.H{
 		"data":           status,
 		"pending_events": h.EventBuffer.PendingCount(),
-		"webhook_url":    webhookURL,
 	})
 }
 

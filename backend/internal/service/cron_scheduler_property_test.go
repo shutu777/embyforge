@@ -1,35 +1,42 @@
 package service
 
 import (
+	"fmt"
 	"testing"
 
 	"pgregory.net/rapid"
 )
 
-// Feature: emby-webhook-sync, Property 11: Cron 间隔范围约束
+// Feature: emby-webhook-sync, Property 11: Cron 表达式验证
 // Validates: Requirements 5.2
 //
-// 对于任意整数输入，ClampCronInterval 应返回 [1, 168] 范围内的值。
-// 小于 1 的值应被 clamp 到 1，大于 168 的值应被 clamp 到 168。
-func TestProperty_ClampCronIntervalRange(t *testing.T) {
+// 对于任意合法的 cron 表达式，ValidateCronExpr 应返回 true；
+// 对于任意非法字符串，ValidateCronExpr 应返回 false。
+func TestProperty_ValidateCronExpr(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		input := rapid.IntRange(-1000, 1000).Draw(t, "input")
-		result := ClampCronInterval(input)
+		// 生成合法的 5 段 cron 表达式
+		minute := rapid.IntRange(0, 59).Draw(t, "minute")
+		hour := rapid.IntRange(0, 23).Draw(t, "hour")
+		expr := fmt.Sprintf("%d %d * * *", minute, hour)
 
-		// 验证结果在 [1, 168] 范围内
-		if result < 1 || result > 168 {
-			t.Fatalf("ClampCronInterval(%d) = %d, 超出 [1, 168] 范围", input, result)
-		}
-
-		// 验证 clamp 逻辑
-		if input < 1 && result != 1 {
-			t.Fatalf("ClampCronInterval(%d) = %d, 期望 1", input, result)
-		}
-		if input > 168 && result != 168 {
-			t.Fatalf("ClampCronInterval(%d) = %d, 期望 168", input, result)
-		}
-		if input >= 1 && input <= 168 && result != input {
-			t.Fatalf("ClampCronInterval(%d) = %d, 期望 %d（在有效范围内应原样返回）", input, result, input)
+		if !ValidateCronExpr(expr) {
+			t.Fatalf("ValidateCronExpr(%q) = false，期望 true", expr)
 		}
 	})
+}
+
+func TestProperty_ValidateCronExprRejectsInvalid(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		// 生成随机字符串，大概率不是合法 cron 表达式
+		s := rapid.StringMatching(`[a-z]{3,10}`).Draw(t, "invalid")
+		if ValidateCronExpr(s) {
+			t.Fatalf("ValidateCronExpr(%q) = true，期望 false", s)
+		}
+	})
+}
+
+func TestProperty_DefaultCronExprIsValid(t *testing.T) {
+	if !ValidateCronExpr(DefaultCronExpr) {
+		t.Fatalf("默认 cron 表达式 %q 无效", DefaultCronExpr)
+	}
 }

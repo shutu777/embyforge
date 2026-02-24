@@ -7,46 +7,50 @@ import (
 	"time"
 
 	"embyforge/internal/emby"
+
+	"github.com/robfig/cron/v3"
 )
+
+// DefaultCronExpr 默认 cron 表达式：每 2 小时执行一次
+const DefaultCronExpr = "0 */2 * * *"
 
 // CronStatus 调度器状态
 type CronStatus struct {
 	Running       bool       `json:"running"`
-	IntervalHours int        `json:"interval_hours"`
+	CronExpr      string     `json:"cron_expr"`
 	LastExecution *time.Time `json:"last_execution"`
 	NextExecution *time.Time `json:"next_execution"`
+}
+
+// ValidateCronExpr 验证 cron 表达式是否合法
+func ValidateCronExpr(expr string) bool {
+	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+	_, err := parser.Parse(expr)
+	return err == nil
 }
 
 // CronScheduler 定时全量同步调度器
 type CronScheduler struct {
 	mu            sync.Mutex
-	ticker        *time.Ticker
-	stopCh        chan struct{}
+	cronRunner    *cron.Cron
+	entryID       cron.EntryID
 	running       bool
+	cronExpr      string
 	lastExecution *time.Time
-	nextExecution *time.Time
-	intervalHours int
 	syncLock      *SyncLock
 	cacheService  *CacheService
 	eventBuffer   *EventBuffer
 	getEmbyClient func() (*emby.Client, error)
 }
 
-// ClampCronInterval 将 cron 间隔限制在有效范围 [1, 168] 小时
-func ClampCronInterval(hours int) int {
-	if hours < 1 {
-		return 1
-	}
-	if hours > 168 {
-		return 168
-	}
-	return hours
-}
-
 // NewCronScheduler 创建调度器
-func NewCronScheduler(intervalHours int, syncLock *SyncLock, cacheService *CacheService, eventBuffer *EventBuffer, getClient func() (*emby.Client, error)) *CronScheduler {
+func NewCronScheduler(cronExpr string, syncLock *SyncLock, cacheService *CacheService, eventBuffer *EventBuffer, getClient func() (*emby.Client, error)) *CronScheduler {
+	if !ValidateCronExpr(cronExpr) {
+		log.Printf("⚠️ 无效的 cron 表达式 %q，使用默认值 %s", cronExpr, DefaultCronExpr)
+		cronExpr = DefaultCronExpr
+	}
 	return &CronScheduler{
-		intervalHours: ClampCronInterval(intervalHours),
+		cronExpr:      cronExpr,
 		syncLock:      syncLock,
 		cacheService:  cacheService,
 		eventBuffer:   eventBuffer,
@@ -63,17 +67,17 @@ func (cs *CronScheduler) Start() {
 		return
 	}
 
+	cs.cronRunner = cron.New(cron.WithParser(cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)))
+	id, err := cs.cronRunner.AddFunc(cs.cronExpr, cs.executeSync)
+	if err != nil {
+		log.Printf("❌ Cron 表达式解析失败: %v", err)
+		return
+	}
+	cs.entryID = id
+	cs.cronRunner.Start()
 	cs.running = true
-	cs.stopCh = make(chan struct{})
-	interval := time.Duration(cs.intervalHours) * time.Hour
-	cs.ticker = time.NewTicker(interval)
 
-	next := time.Now().Add(interval)
-	cs.nextExecution = &next
-
-	log.Printf("⏰ Cron 定时同步已启动，间隔: %d 小时", cs.intervalHours)
-
-	go cs.loop()
+	log.Printf("⏰ Cron 定时同步已启动，表达式: %s", cs.cronExpr)
 }
 
 // Stop 停止定时调度
@@ -85,32 +89,37 @@ func (cs *CronScheduler) Stop() {
 		return
 	}
 
+	cs.cronRunner.Stop()
 	cs.running = false
-	close(cs.stopCh)
-	cs.ticker.Stop()
-	cs.nextExecution = nil
 	log.Printf("⏰ Cron 定时同步已停止")
 }
 
-// UpdateInterval 更新调度间隔（热更新，无需重启）
-func (cs *CronScheduler) UpdateInterval(hours int) {
-	hours = ClampCronInterval(hours)
+// UpdateCronExpr 更新 cron 表达式（热更新，无需重启）
+func (cs *CronScheduler) UpdateCronExpr(expr string) {
+	if !ValidateCronExpr(expr) {
+		log.Printf("⚠️ 无效的 cron 表达式 %q，忽略更新", expr)
+		return
+	}
 
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 
-	if cs.intervalHours == hours {
+	if cs.cronExpr == expr {
 		return
 	}
 
-	cs.intervalHours = hours
-	log.Printf("⏰ Cron 间隔已更新为 %d 小时", hours)
+	cs.cronExpr = expr
+	log.Printf("⏰ Cron 表达式已更新为 %s", expr)
 
-	// 如果正在运行，重置 ticker
-	if cs.running && cs.ticker != nil {
-		cs.ticker.Reset(time.Duration(hours) * time.Hour)
-		next := time.Now().Add(time.Duration(hours) * time.Hour)
-		cs.nextExecution = &next
+	// 如果正在运行，重建调度
+	if cs.running && cs.cronRunner != nil {
+		cs.cronRunner.Remove(cs.entryID)
+		id, err := cs.cronRunner.AddFunc(expr, cs.executeSync)
+		if err != nil {
+			log.Printf("❌ 更新 cron 表达式失败: %v", err)
+			return
+		}
+		cs.entryID = id
 	}
 }
 
@@ -119,24 +128,22 @@ func (cs *CronScheduler) Status() CronStatus {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 
-	return CronStatus{
+	status := CronStatus{
 		Running:       cs.running,
-		IntervalHours: cs.intervalHours,
+		CronExpr:      cs.cronExpr,
 		LastExecution: cs.lastExecution,
-		NextExecution: cs.nextExecution,
 	}
-}
 
-// loop 调度循环
-func (cs *CronScheduler) loop() {
-	for {
-		select {
-		case <-cs.stopCh:
-			return
-		case <-cs.ticker.C:
-			cs.executeSync()
+	// 从 cron runner 获取下次执行时间
+	if cs.running && cs.cronRunner != nil {
+		entry := cs.cronRunner.Entry(cs.entryID)
+		if !entry.Next.IsZero() {
+			next := entry.Next
+			status.NextExecution = &next
 		}
 	}
+
+	return status
 }
 
 // executeSync 执行一次全量同步
@@ -144,10 +151,6 @@ func (cs *CronScheduler) executeSync() {
 	// 检查同步锁
 	if cs.syncLock.IsLocked() {
 		log.Printf("⏰ Cron: 同步锁被占用 (%s)，跳过本次周期", cs.syncLock.Holder())
-		cs.mu.Lock()
-		next := time.Now().Add(time.Duration(cs.intervalHours) * time.Hour)
-		cs.nextExecution = &next
-		cs.mu.Unlock()
 		return
 	}
 
@@ -177,8 +180,6 @@ func (cs *CronScheduler) executeSync() {
 	now := time.Now()
 	cs.mu.Lock()
 	cs.lastExecution = &now
-	next := now.Add(time.Duration(cs.intervalHours) * time.Hour)
-	cs.nextExecution = &next
 	cs.mu.Unlock()
 
 	if err != nil {

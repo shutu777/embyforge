@@ -58,44 +58,32 @@ func newFakeEmbyServer(serverID string, reachable bool) *httptest.Server {
 // Validates: Requirements 1.2, 1.4, 1.5
 //
 // 对于任意 Emby 配置和可达性状态组合，GetServerInfo 返回的 base_url 应遵循：
-// 内网可达 → 返回内网地址；内网不可达但外网可达 → 返回外网地址；都不可达 → 回退内网地址且 connected=false
+// 有外网地址 → 返回外网地址；无外网地址 → 返回内网地址。
+// connected 仅取决于内网探测结果（后端在内网）。
 func TestProperty_URLSelectionPriority(t *testing.T) {
 	r, h := setupEmbyConfigTest(t)
 
 	rapid.Check(t, func(rt *rapid.T) {
-		// 随机生成可达性状态
 		internalReachable := rapid.Bool().Draw(rt, "internalReachable")
-		externalReachable := rapid.Bool().Draw(rt, "externalReachable")
 		hasExternalURL := rapid.Bool().Draw(rt, "hasExternalURL")
 
 		serverID := rapid.StringMatching(`[a-f0-9]{16}`).Draw(rt, "serverID")
 
-		// 创建模拟 Emby 服务器
+		// 创建模拟内网 Emby 服务器
 		internalServer := newFakeEmbyServer(serverID, internalReachable)
 		defer internalServer.Close()
 
-		var externalServer *httptest.Server
+		// 外网地址只用于返回给前端，后端不探测它
 		externalURL := ""
 		if hasExternalURL {
-			externalServer = newFakeEmbyServer(serverID, externalReachable)
+			externalServer := newFakeEmbyServer(serverID, true)
 			defer externalServer.Close()
 			externalURL = externalServer.URL
 		}
 
-		// httptest.Server 的 URL 格式为 http://127.0.0.1:PORT，需要拆分为 host 和 port
-		// 但 probeEmbyURL 接受完整的 baseURL，而 GetServerInfo 用 fmt.Sprintf("%s:%d", host, port) 构建
-		// 所以我们需要让 host 包含 scheme，port 为实际端口
-		// 解析 internalServer.URL
-		internalURL := internalServer.URL // 如 http://127.0.0.1:12345
-
-		// 插入配置：使用 host=internalServer.URL, port=0 的方式不行
-		// 因为 GetServerInfo 用 fmt.Sprintf("%s:%d", config.Host, config.Port) 构建 URL
-		// 我们需要让构建出的 URL 等于 internalServer.URL
-		// internalServer.URL 格式为 http://127.0.0.1:PORT
-		// 所以设置 Host = "http://127.0.0.1", Port = PORT
+		internalURL := internalServer.URL
 		var host string
 		var port int
-		// 解析 URL 获取端口
 		for i := len(internalURL) - 1; i >= 0; i-- {
 			if internalURL[i] == ':' {
 				host = internalURL[:i]
@@ -118,7 +106,6 @@ func TestProperty_URLSelectionPriority(t *testing.T) {
 			t.Fatalf("插入配置失败: %v", err)
 		}
 
-		// 调用 GetServerInfo
 		req := httptest.NewRequest(http.MethodGet, "/api/emby-config/server-info", nil)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
@@ -139,33 +126,20 @@ func TestProperty_URLSelectionPriority(t *testing.T) {
 			t.Fatalf("解析响应失败: %v", err)
 		}
 
-		expectedInternalURL := internalURL
-
-		// 验证 URL 选择优先级
-		if internalReachable {
-			// 内网可达 → 返回内网地址
-			if resp.Data.BaseURL != expectedInternalURL {
-				t.Fatalf("内网可达时应返回内网地址 %q，实际 %q", expectedInternalURL, resp.Data.BaseURL)
-			}
-			if !resp.Data.Connected {
-				t.Fatalf("内网可达时 connected 应为 true")
-			}
-		} else if hasExternalURL && externalReachable {
-			// 内网不可达但外网可达 → 返回外网地址
+		// 验证 base_url：有外网地址就返回外网，否则返回内网
+		if hasExternalURL {
 			if resp.Data.BaseURL != externalURL {
-				t.Fatalf("外网可达时应返回外网地址 %q，实际 %q", externalURL, resp.Data.BaseURL)
-			}
-			if !resp.Data.Connected {
-				t.Fatalf("外网可达时 connected 应为 true")
+				t.Fatalf("有外网地址时应返回外网地址 %q，实际 %q", externalURL, resp.Data.BaseURL)
 			}
 		} else {
-			// 都不可达 → 回退内网地址，connected=false
-			if resp.Data.BaseURL != expectedInternalURL {
-				t.Fatalf("都不可达时应回退内网地址 %q，实际 %q", expectedInternalURL, resp.Data.BaseURL)
+			if resp.Data.BaseURL != internalURL {
+				t.Fatalf("无外网地址时应返回内网地址 %q，实际 %q", internalURL, resp.Data.BaseURL)
 			}
-			if resp.Data.Connected {
-				t.Fatalf("都不可达时 connected 应为 false")
-			}
+		}
+
+		// 验证 connected：仅取决于内网探测
+		if resp.Data.Connected != internalReachable {
+			t.Fatalf("connected 期望 %v，实际 %v", internalReachable, resp.Data.Connected)
 		}
 	})
 }
