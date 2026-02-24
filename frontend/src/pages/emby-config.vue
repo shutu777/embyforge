@@ -12,6 +12,7 @@ const apiKey = ref('')
 const username = ref('')
 const password = ref('')
 const hasPassword = ref(false)
+const externalUrl = ref('')
 
 // 状态
 const saving = ref(false)
@@ -27,6 +28,7 @@ onMounted(async () => {
       apiKey.value = data.data.api_key || ''
       username.value = data.data.username || ''
       hasPassword.value = data.data.has_password || false
+      externalUrl.value = data.data.external_url || ''
     }
   } catch (e) {
     console.error('获取配置失败', e)
@@ -43,6 +45,7 @@ async function saveConfig() {
       api_key: apiKey.value,
       username: username.value,
       password: password.value,
+      external_url: externalUrl.value,
     })
     snackbar.success(data.message || '配置保存成功')
   } catch (e) {
@@ -105,6 +108,15 @@ async function testConnection() {
                 label="端口"
                 type="number"
                 placeholder="8096"
+              />
+            </VCol>
+            <VCol cols="12">
+              <VTextField
+                v-model="externalUrl"
+                label="外网访问地址（可选）"
+                placeholder="https://emby.example.com"
+                hint="通过反向代理从外网访问时填写，留空则使用内网地址。用于封面图片加载和 Emby Web 跳转"
+                persistent-hint
               />
             </VCol>
             <VCol cols="12">

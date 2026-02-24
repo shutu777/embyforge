@@ -1,11 +1,13 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useDisplay } from 'vuetify'
 import api from '@/utils/api'
 import { useSnackbar } from '@/composables/useSnackbar'
+import { useEmbyUrl } from '@/composables/useEmbyUrl'
 
 const snackbar = useSnackbar()
 const { smAndDown } = useDisplay()
+const { detectEmbyUrl, embyImageUrl, embyWebUrl } = useEmbyUrl()
 
 // 搜索相关
 const searchInput = ref('')
@@ -132,6 +134,10 @@ function formatType(type) {
 function getChildCount(item) {
   return item.ChildCount || item.RecursiveItemCount || 0
 }
+
+onMounted(() => {
+  detectEmbyUrl()
+})
 </script>
 
 <template>
@@ -196,8 +202,8 @@ function getChildCount(item) {
               <!-- 左侧海报 -->
               <div class="result-poster" @click="onDeleteClick(item)">
                 <VImg
-                  v-if="item.ImageUrl"
-                  :src="item.ImageUrl"
+                  v-if="item.HasImage"
+                  :src="embyImageUrl(item.Id, 300)"
                   width="130"
                   height="195"
                   cover
@@ -250,8 +256,8 @@ function getChildCount(item) {
 
                 <VCardActions class="pt-0">
                   <VBtn
-                    v-if="item.EmbyUrl"
-                    :href="item.EmbyUrl"
+                    v-if="embyWebUrl(item.Id)"
+                    :href="embyWebUrl(item.Id)"
                     target="_blank"
                     variant="text"
                     color="primary"

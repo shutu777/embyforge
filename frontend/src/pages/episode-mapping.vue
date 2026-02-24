@@ -4,11 +4,13 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import api from '@/utils/api'
 import { useSnackbar } from '@/composables/useSnackbar'
+import { useEmbyUrl } from '@/composables/useEmbyUrl'
 
 const route = useRoute()
 const router = useRouter()
 const snackbar = useSnackbar()
 const { smAndDown } = useDisplay()
+const { detectEmbyUrl, embyWebUrl } = useEmbyUrl()
 
 // 从 URL query 初始化状态
 const page = ref(Number(route.query.page) || 1)
@@ -37,17 +39,9 @@ const cacheFreshness = ref(null)
 
 const tmdbNotConfigured = ref(false)
 
-// Emby 配置
-const embyConfig = ref(null)
+// Emby 配置（由 useEmbyUrl 全局管理）
 
 const hasCache = computed(() => cacheStatus.value && cacheStatus.value.total_items > 0)
-
-const embyBaseUrl = computed(() => {
-  if (!embyConfig.value) return ''
-  return `${embyConfig.value.host}:${embyConfig.value.port}`
-})
-
-const embyServerId = computed(() => embyConfig.value?.server_id || '')
 
 const lastAnalyzedAt = computed(() => {
   return analysisStatus.value?.episode_mapping?.last_analyzed_at || null
@@ -75,11 +69,11 @@ function syncQueryToUrl() {
 }
 
 function openInEmby(embyItemId) {
-  if (!embyBaseUrl.value || !embyServerId.value) {
+  const url = embyWebUrl(embyItemId)
+  if (!url) {
     snackbar.error('Emby 服务器未配置或无法获取服务器信息')
     return
   }
-  const url = `${embyBaseUrl.value}/web/index.html#!/item?id=${embyItemId}&serverId=${embyServerId.value}`
   window.open(url, '_blank')
 }
 
@@ -87,14 +81,7 @@ function openInTmdb(tmdbId) {
   window.open(`https://www.themoviedb.org/tv/${tmdbId}`, '_blank')
 }
 
-async function fetchEmbyConfig() {
-  try {
-    const { data } = await api.get('/emby-config/server-info')
-    embyConfig.value = data.data
-  } catch (e) {
-    console.error('获取 Emby 服务器信息失败', e)
-  }
-}
+// Emby 地址探测（由 useEmbyUrl 全局管理）
 
 function formatTime(timeStr) {
   if (!timeStr) return '-'
@@ -207,7 +194,7 @@ watch(sortBy, () => {
 
 onMounted(async () => {
   await fetchCacheStatus()
-  await Promise.all([fetchAnomalies(), fetchAnalysisStatus(), fetchEmbyConfig()])
+  await Promise.all([fetchAnomalies(), fetchAnalysisStatus(), detectEmbyUrl()])
 })
 </script>
 

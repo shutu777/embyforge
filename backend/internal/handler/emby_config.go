@@ -1,8 +1,11 @@
 package handler
 
 import (
+	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	"embyforge/internal/emby"
 	"embyforge/internal/model"
@@ -21,13 +24,42 @@ func NewEmbyConfigHandler(db *gorm.DB) *EmbyConfigHandler {
 	return &EmbyConfigHandler{DB: db}
 }
 
+// probeEmbyURL 探测指定 Emby 地址是否可达
+// 发送 GET /emby/System/Info 请求，超时 3 秒
+// 返回 serverID、serverName 和是否可达
+func probeEmbyURL(baseURL, apiKey string) (serverID string, serverName string, ok bool) {
+	client := &http.Client{Timeout: 3 * time.Second}
+	req, err := http.NewRequest("GET", baseURL+"/emby/System/Info", nil)
+	if err != nil {
+		return "", "", false
+	}
+	req.Header.Set("X-Emby-Token", apiKey)
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", "", false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", "", false
+	}
+	var info struct {
+		ID         string `json:"Id"`
+		ServerName string `json:"ServerName"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return "", "", false
+	}
+	return info.ID, info.ServerName, true
+}
+
 // EmbyConfigRequest Emby 配置请求体
 type EmbyConfigRequest struct {
-	Host     string `json:"host" binding:"required"`
-	Port     int    `json:"port" binding:"required"`
-	APIKey   string `json:"api_key" binding:"required"`
-	Username string `json:"username"` // 可选，用于删除操作认证
-	Password string `json:"password"` // 可选，用于删除操作认证
+	Host        string `json:"host" binding:"required"`
+	Port        int    `json:"port" binding:"required"`
+	APIKey      string `json:"api_key" binding:"required"`
+	Username    string `json:"username"`     // 可选，用于删除操作认证
+	Password    string `json:"password"`     // 可选，用于删除操作认证
+	ExternalURL string `json:"external_url"` // 可选，Emby 外网访问地址
 }
 
 // GetConfig 获取已保存的 Emby 配置
@@ -52,6 +84,7 @@ func (h *EmbyConfigHandler) GetConfig(c *gin.Context) {
 		"api_key":      config.APIKey,
 		"username":     config.Username,
 		"has_password":  hasPassword,
+		"external_url": config.ExternalURL,
 		"created_at":   config.CreatedAt,
 		"updated_at":   config.UpdatedAt,
 	}})
@@ -71,11 +104,12 @@ func (h *EmbyConfigHandler) SaveConfig(c *gin.Context) {
 	if result.Error == gorm.ErrRecordNotFound {
 		// 创建新记录
 		config := model.EmbyConfig{
-			Host:     req.Host,
-			Port:     req.Port,
-			APIKey:   req.APIKey,
-			Username: req.Username,
-			Password: req.Password,
+			Host:        req.Host,
+			Port:        req.Port,
+			APIKey:      req.APIKey,
+			Username:    req.Username,
+			Password:    req.Password,
+			ExternalURL: req.ExternalURL,
 		}
 		if err := h.DB.Create(&config).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "保存配置失败"})
@@ -96,6 +130,7 @@ func (h *EmbyConfigHandler) SaveConfig(c *gin.Context) {
 	existing.Port = req.Port
 	existing.APIKey = req.APIKey
 	existing.Username = req.Username
+	existing.ExternalURL = req.ExternalURL
 	// 密码为空时保留原密码（前端不回传密码）
 	if req.Password != "" {
 		existing.Password = req.Password
@@ -137,7 +172,7 @@ func (h *EmbyConfigHandler) TestConnection(c *gin.Context) {
 	})
 }
 
-// GetServerInfo 获取 Emby 服务器信息（包含 serverId，用于前端构建跳转链接）
+// GetServerInfo 获取 Emby 服务器信息（后端探测可达性，返回可用的 base_url）
 func (h *EmbyConfigHandler) GetServerInfo(c *gin.Context) {
 	var config model.EmbyConfig
 	if err := h.DB.First(&config).Error; err != nil {
@@ -149,19 +184,45 @@ func (h *EmbyConfigHandler) GetServerInfo(c *gin.Context) {
 		return
 	}
 
-	client := emby.NewClient(config.Host, config.Port, config.APIKey)
-	info, err := client.TestConnection()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "无法连接 Emby 服务器"})
+	internalURL := fmt.Sprintf("%s:%d", config.Host, config.Port)
+
+	// 优先探测内网地址
+	serverID, _, ok := probeEmbyURL(internalURL, config.APIKey)
+	if ok {
+		c.JSON(http.StatusOK, gin.H{
+			"data": gin.H{
+				"base_url":  internalURL,
+				"server_id": serverID,
+				"api_key":   config.APIKey,
+				"connected": true,
+			},
+		})
 		return
 	}
 
+	// 内网不可达，尝试外网地址
+	if config.ExternalURL != "" {
+		serverID, _, ok = probeEmbyURL(config.ExternalURL, config.APIKey)
+		if ok {
+			c.JSON(http.StatusOK, gin.H{
+				"data": gin.H{
+					"base_url":  config.ExternalURL,
+					"server_id": serverID,
+					"api_key":   config.APIKey,
+					"connected": true,
+				},
+			})
+			return
+		}
+	}
+
+	// 都不可达，回退到内网地址
 	c.JSON(http.StatusOK, gin.H{
 		"data": gin.H{
-			"host":        config.Host,
-			"port":        config.Port,
-			"server_id":   info.ID,
-			"server_name": info.ServerName,
+			"base_url":  internalURL,
+			"server_id": "",
+			"api_key":   config.APIKey,
+			"connected": false,
 		},
 	})
 }

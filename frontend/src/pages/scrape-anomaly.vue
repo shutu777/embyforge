@@ -3,9 +3,11 @@ import { ref, computed, onMounted } from 'vue'
 import { useDisplay } from 'vuetify'
 import api from '@/utils/api'
 import { useSnackbar } from '@/composables/useSnackbar'
+import { useEmbyUrl } from '@/composables/useEmbyUrl'
 
 const snackbar = useSnackbar()
 const { smAndDown } = useDisplay()
+const { detectEmbyUrl, embyWebUrl } = useEmbyUrl()
 
 // 表格数据
 const anomalies = ref([])
@@ -43,20 +45,12 @@ const loadingMissingPosterItems = ref(false)
 // 单个查找封面状态
 const findingSinglePoster = ref({}) // 记录每个条目的loading状态
 
-// Emby 配置（用于构建跳转链接）
-const embyConfig = ref(null)
+// Emby 配置（由 useEmbyUrl 全局管理）
 
 // 是否有缓存数据
 const hasCache = computed(() => cacheStatus.value && cacheStatus.value.total_items > 0)
 
-// Emby 基础 URL
-const embyBaseUrl = computed(() => {
-  if (!embyConfig.value) return ''
-  return `${embyConfig.value.host}:${embyConfig.value.port}`
-})
-
-// Emby 服务器 ID
-const embyServerId = computed(() => embyConfig.value?.server_id || '')
+// Emby 基础 URL（由 useEmbyUrl 全局管理）
 
 // 最后分析时间
 const lastAnalyzedAt = computed(() => {
@@ -79,23 +73,15 @@ const headers = [
 
 // 跳转到 Emby 媒体详情页
 function openInEmby(item) {
-  if (!embyBaseUrl.value || !embyServerId.value) {
+  const url = embyWebUrl(item.emby_item_id)
+  if (!url) {
     snackbar.error('Emby 服务器未配置或无法获取服务器信息')
     return
   }
-  const url = `${embyBaseUrl.value}/web/index.html#!/item?id=${item.emby_item_id}&serverId=${embyServerId.value}`
   window.open(url, '_blank')
 }
 
-// 获取 Emby 服务器信息
-async function fetchEmbyConfig() {
-  try {
-    const { data } = await api.get('/emby-config/server-info')
-    embyConfig.value = data.data
-  } catch (e) {
-    console.error('获取 Emby 服务器信息失败', e)
-  }
-}
+// Emby 地址探测（由 useEmbyUrl 全局管理）
 
 // 格式化时间
 function formatTime(timeStr) {
@@ -294,7 +280,7 @@ async function findSinglePoster(item) {
 
 onMounted(async () => {
   await fetchCacheStatus()
-  await Promise.all([fetchAnomalies(), fetchAnalysisStatus(), fetchEmbyConfig()])
+  await Promise.all([fetchAnomalies(), fetchAnalysisStatus(), detectEmbyUrl()])
 })
 </script>
 

@@ -74,10 +74,7 @@ func (h *QuickDeleteHandler) SearchEmbyMedia(c *gin.Context) {
 		return
 	}
 
-	// 构建带海报 URL 的结果
-	baseURL := fmt.Sprintf("%s:%d", client.Host, client.Port)
-
-	// 获取 serverId 用于 Emby Web 跳转链接
+	// 获取 serverId 用于前端构建跳转链接
 	serverID := ""
 	if info, err := client.TestConnection(); err == nil {
 		serverID = info.ID
@@ -90,8 +87,8 @@ func (h *QuickDeleteHandler) SearchEmbyMedia(c *gin.Context) {
 		ProductionYear     int    `json:"ProductionYear"`
 		ChildCount         int    `json:"ChildCount"`
 		RecursiveItemCount int    `json:"RecursiveItemCount"`
-		ImageURL           string `json:"ImageUrl"`
-		EmbyURL            string `json:"EmbyUrl"`
+		HasImage           bool   `json:"HasImage"`
+		ServerID           string `json:"ServerId"`
 		TmdbID             string `json:"TmdbId"`
 		ImdbID             string `json:"ImdbId"`
 		Path               string `json:"Path"`
@@ -99,12 +96,7 @@ func (h *QuickDeleteHandler) SearchEmbyMedia(c *gin.Context) {
 
 	results := make([]SearchResult, 0, len(items))
 	for _, item := range items {
-		imgURL := ""
-		if _, ok := item.ImageTags["Primary"]; ok {
-			imgURL = fmt.Sprintf("%s/emby/Items/%s/Images/Primary?maxHeight=300&api_key=%s", baseURL, item.ID, client.APIKey)
-		}
-		// 构建 Emby Web 跳转链接
-		embyURL := fmt.Sprintf("%s/web/index.html#!/item?id=%s&serverId=%s", baseURL, item.ID, serverID)
+		_, hasImage := item.ImageTags["Primary"]
 
 		results = append(results, SearchResult{
 			ID:                 item.ID,
@@ -113,8 +105,8 @@ func (h *QuickDeleteHandler) SearchEmbyMedia(c *gin.Context) {
 			ProductionYear:     item.ProductionYear,
 			ChildCount:         item.ChildCount,
 			RecursiveItemCount: item.RecursiveItemCount,
-			ImageURL:           imgURL,
-			EmbyURL:            embyURL,
+			HasImage:           hasImage,
+			ServerID:           serverID,
 			TmdbID:             item.ProviderIds["Tmdb"],
 			ImdbID:             item.ProviderIds["Imdb"],
 			Path:               item.Path,

@@ -31,7 +31,7 @@ type RecentMedia struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
 	Type     string `json:"type"`
-	ImageURL string `json:"image_url"`
+	HasImage bool   `json:"has_image"`
 }
 
 // PlaybackRecord 播放记录
@@ -40,7 +40,7 @@ type PlaybackRecord struct {
 	Device   string `json:"device"`
 	Media    string `json:"media"`
 	Time     string `json:"time"`
-	ImageURL string `json:"image_url"`
+	ItemID   string `json:"item_id"`
 }
 
 // DashboardData 仪表盘数据
@@ -199,10 +199,7 @@ func (h *DashboardHandler) fetchRecentItems(baseURL, apiKey string) []RecentMedi
 
 	items := make([]RecentMedia, 0, len(resp.Items))
 	for _, item := range resp.Items {
-		imgURL := ""
-		if _, ok := item.ImageTags["Primary"]; ok {
-			imgURL = fmt.Sprintf("%s/emby/Items/%s/Images/Primary?maxHeight=160&api_key=%s", baseURL, item.ID, apiKey)
-		}
+		_, hasImage := item.ImageTags["Primary"]
 		typeName := item.Type
 		if typeName == "Movie" {
 			typeName = "电影"
@@ -213,7 +210,7 @@ func (h *DashboardHandler) fetchRecentItems(baseURL, apiKey string) []RecentMedi
 			ID:       item.ID,
 			Name:     item.Name,
 			Type:     typeName,
-			ImageURL: imgURL,
+			HasImage: hasImage,
 		})
 	}
 	return items
@@ -287,18 +284,12 @@ func (h *DashboardHandler) fetchRecentPlayback(baseURL, apiKey string) []Playbac
 			timeStr = t.Local().Format("01/02 15:04")
 		}
 
-		// 通过 ItemId 获取封面
-		imgURL := ""
-		if entry.ItemId != "" {
-			imgURL = fmt.Sprintf("%s/emby/Items/%s/Images/Primary?maxHeight=160&api_key=%s", baseURL, entry.ItemId, apiKey)
-		}
-
 		records = append(records, PlaybackRecord{
-			User:     user,
-			Device:   device,
-			Media:    media,
-			Time:     timeStr,
-			ImageURL: imgURL,
+			User:   user,
+			Device: device,
+			Media:  media,
+			Time:   timeStr,
+			ItemID: entry.ItemId,
 		})
 
 		if len(records) >= 5 {

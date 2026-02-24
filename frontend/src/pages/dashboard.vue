@@ -3,9 +3,11 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useTheme } from 'vuetify'
 import api from '@/utils/api'
 import AsyncChart from '@/components/AsyncChart.vue'
+import { useEmbyUrl } from '@/composables/useEmbyUrl'
 
 const vuetifyTheme = useTheme()
 const isDark = computed(() => vuetifyTheme.global.current.value.dark)
+const { detectEmbyUrl, embyImageUrl } = useEmbyUrl()
 
 const loading = ref(true)
 const d = ref({
@@ -42,6 +44,7 @@ async function fetchDashboard() {
 
 onMounted(() => {
   fetchDashboard()
+  detectEmbyUrl()
   // 每60秒自动刷新
   refreshTimer = setInterval(fetchDashboard, 60000)
 })
@@ -185,7 +188,7 @@ const anomalyChartSeries = computed(() => [{
                 >
                   <span class="text-body-2 text-medium-emphasis me-3" style="min-width: 16px; text-align: center;">{{ i + 1 }}</span>
                   <VAvatar size="36" rounded="lg" class="me-3" style="flex-shrink: 0;">
-                    <VImg v-if="item.image_url" :src="item.image_url" cover />
+                    <VImg v-if="item.has_image" :src="embyImageUrl(item.id, 160)" cover />
                     <VIcon v-else icon="ri-image-line" size="18" />
                   </VAvatar>
                   <span class="text-body-2 flex-grow-1 text-truncate">{{ item.name }}</span>
@@ -279,7 +282,7 @@ const anomalyChartSeries = computed(() => [{
                   :class="{ 'item-border': i < d.recent_playback.length - 1 }"
                 >
                   <VAvatar size="36" rounded="lg" class="me-3" style="flex-shrink: 0;">
-                    <VImg v-if="item.image_url" :src="item.image_url" cover />
+                    <VImg v-if="item.item_id" :src="embyImageUrl(item.item_id, 160)" cover />
                     <VIcon v-else icon="ri-play-circle-fill" size="18" />
                   </VAvatar>
                   <div class="flex-grow-1" style="min-width: 0;">

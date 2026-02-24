@@ -118,6 +118,8 @@ export default defineConfig({
     },
   },
   server: {
+    host: '0.0.0.0',
+    allowedHosts: true,
     // API 代理，将 /api 请求转发到后端
     proxy: {
       '/api': {
