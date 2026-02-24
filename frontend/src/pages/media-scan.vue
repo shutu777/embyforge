@@ -1,11 +1,11 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
+import { useClipboard } from '@vueuse/core'
 import api from '@/utils/api'
 import { useSnackbar } from '@/composables/useSnackbar'
 
 const snackbar = useSnackbar()
-
-// 缓存状态
+const { copy: clipboardCopy } = useClipboard({ legacy: true })
 const cacheStatus = ref(null)
 const loadingStatus = ref(false)
 
@@ -25,7 +25,7 @@ const pendingEvents = ref(0)
 const webhookUrl = ref('/api/webhook/emby')
 
 function copyWebhookUrl() {
-  navigator.clipboard.writeText(webhookUrl.value).then(() => {
+  clipboardCopy(webhookUrl.value).then(() => {
     snackbar.success('Webhook 地址已复制到剪贴板')
   }).catch(() => {
     snackbar.error('复制失败，请手动复制')

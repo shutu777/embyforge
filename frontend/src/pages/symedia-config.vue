@@ -1,9 +1,11 @@
 <script setup>
 import { ref, onMounted } from 'vue'
+import { useClipboard } from '@vueuse/core'
 import api from '@/utils/api'
 import { useSnackbar } from '@/composables/useSnackbar'
 
 const snackbar = useSnackbar()
+const { copy: clipboardCopy } = useClipboard({ legacy: true })
 
 // 手动刷新表单状态
 const manualForm = ref({
@@ -243,7 +245,7 @@ async function copyWebhookUrl() {
   }
   
   try {
-    await navigator.clipboard.writeText(webhookUrl.value)
+    await clipboardCopy(webhookUrl.value)
     snackbar.success('Webhook URL 已复制到剪贴板')
   } catch (e) {
     snackbar.error('复制失败，请手动复制')

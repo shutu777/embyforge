@@ -134,10 +134,11 @@ func TestProperty_ScrapeAnomalyTypeFilter(t *testing.T) {
 }
 
 
-// Feature: sync-and-analysis-performance, Property 7: 重复检测 SQL 等价性
+// Feature: sync-and-analysis-performance, Property 7: 重复检测缓存分析等价性
 // Validates: Requirements 7.3
 //
-// 对于任意一组媒体缓存记录，SQL GROUP BY 的重复检测结果
+// 对于任意一组包含 Movie、Series、Episode 的媒体缓存记录，
+// AnalyzeDuplicateMediaFromCache（电影用 SQL + 剧集用 Go）的结果
 // 应与内存中的 DetectDuplicateMedia 纯函数产生相同的重复分组。
 func TestProperty_DuplicateDetectionSQLEquivalence(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -151,33 +152,62 @@ func TestProperty_DuplicateDetectionSQLEquivalence(t *testing.T) {
 
 	scanService := NewScanService(db)
 
+	// 使用小范围值增加碰撞概率，确保能产生重复
+	seriesIDs := []string{"series-1", "series-2", "series-3"}
+	seriesNameMap := map[string]string{"series-1": "ShowA", "series-2": "ShowB", "series-3": "ShowC"}
+
 	rapid.Check(t, func(t *rapid.T) {
-		count := rapid.IntRange(0, 30).Draw(t, "count")
+		count := rapid.IntRange(0, 40).Draw(t, "count")
 		items := make([]emby.MediaItem, count)
 
 		db.Exec("DELETE FROM media_caches")
 		db.Exec("DELETE FROM duplicate_media")
 
 		for i := 0; i < count; i++ {
+			// 生成混合类型：Movie、Series、Episode
+			itemType := rapid.SampledFrom([]string{"Movie", "Series", "Episode"}).Draw(t, fmt.Sprintf("type_%d", i))
+
 			providerIds := map[string]string{}
-			if rapid.Bool().Draw(t, fmt.Sprintf("hasTmdb_%d", i)) {
-				providerIds["Tmdb"] = fmt.Sprintf("%d", rapid.IntRange(1, 5).Draw(t, fmt.Sprintf("tmdb_%d", i)))
-			}
-			if rapid.Bool().Draw(t, fmt.Sprintf("hasImdb_%d", i)) {
-				providerIds["Imdb"] = fmt.Sprintf("tt%04d", rapid.IntRange(1, 5).Draw(t, fmt.Sprintf("imdb_%d", i)))
+			var seriesID, seriesName string
+			var parentIdx, idx int
+			var path string
+
+			switch itemType {
+			case "Movie":
+				// 电影：随机是否有 TMDB ID，使用小范围增加碰撞
+				if rapid.Bool().Draw(t, fmt.Sprintf("hasTmdb_%d", i)) {
+					providerIds["Tmdb"] = fmt.Sprintf("%d", rapid.IntRange(1, 5).Draw(t, fmt.Sprintf("tmdb_%d", i)))
+				}
+				path = fmt.Sprintf("/media/movies/movie_%d.mkv", i)
+
+			case "Episode":
+				// 剧集：随机 SeriesID + 季号 + 集号，使用小范围增加碰撞
+				seriesID = rapid.SampledFrom(seriesIDs).Draw(t, fmt.Sprintf("seriesId_%d", i))
+				seriesName = seriesNameMap[seriesID]
+				parentIdx = rapid.IntRange(1, 3).Draw(t, fmt.Sprintf("season_%d", i))
+				idx = rapid.IntRange(1, 5).Draw(t, fmt.Sprintf("episode_%d", i))
+				// 路径包含 Season/SxxExx 格式，确保 resolveSeasonNumber 和 resolveEpisodeNumber 能正确提取
+				path = fmt.Sprintf("/media/tv/%s/Season %d/%s.S%dE%d.ep.mkv", seriesName, parentIdx, seriesName, parentIdx, idx)
+
+			case "Series":
+				// Series 本身不参与重复检测
+				path = fmt.Sprintf("/media/tv/show_%d", i)
 			}
 
-			name := rapid.SampledFrom([]string{"MovieA", "MovieB", "MovieC", "ShowX", "ShowY"}).Draw(t, fmt.Sprintf("name_%d", i))
-			itemType := rapid.SampledFrom([]string{"Movie", "Series"}).Draw(t, fmt.Sprintf("type_%d", i))
+			name := rapid.SampledFrom([]string{"MovieA", "MovieB", "EpX", "EpY"}).Draw(t, fmt.Sprintf("name_%d", i))
 
 			items[i] = emby.MediaItem{
-				ID:          fmt.Sprintf("item-%d", i),
-				Name:        name,
-				Type:        itemType,
-				ImageTags:   map[string]string{"Primary": "tag"},
-				Path:        fmt.Sprintf("/media/%d", i),
-				ProviderIds: providerIds,
-				FileSize:    int64(rapid.IntRange(100, 9999).Draw(t, fmt.Sprintf("size_%d", i))),
+				ID:                fmt.Sprintf("item-%d", i),
+				Name:              name,
+				Type:              itemType,
+				ImageTags:         map[string]string{"Primary": "tag"},
+				Path:              path,
+				ProviderIds:       providerIds,
+				SeriesID:          seriesID,
+				SeriesName:        seriesName,
+				ParentIndexNumber: parentIdx,
+				IndexNumber:       idx,
+				FileSize:          int64(rapid.IntRange(100, 9999).Draw(t, fmt.Sprintf("size_%d", i))),
 			}
 
 			// 写入缓存
@@ -190,18 +220,18 @@ func TestProperty_DuplicateDetectionSQLEquivalence(t *testing.T) {
 		// 纯函数检测（参考结果）
 		directDuplicates := DetectDuplicateMedia(items)
 
-		// SQL 检测
+		// 缓存分析检测（电影用 SQL + 剧集用 Go）
 		_, err := scanService.AnalyzeDuplicateMediaFromCache()
 		if err != nil {
-			t.Fatalf("SQL 重复检测失败: %v", err)
+			t.Fatalf("缓存重复检测失败: %v", err)
 		}
 
-		var sqlDuplicates []model.DuplicateMedia
-		db.Find(&sqlDuplicates)
+		var cacheDuplicates []model.DuplicateMedia
+		db.Find(&cacheDuplicates)
 
 		// 验证数量一致
-		if len(sqlDuplicates) != len(directDuplicates) {
-			t.Fatalf("重复条目数量不匹配: 纯函数=%d, SQL=%d", len(directDuplicates), len(sqlDuplicates))
+		if len(cacheDuplicates) != len(directDuplicates) {
+			t.Fatalf("重复条目数量不匹配: 纯函数=%d, 缓存分析=%d", len(directDuplicates), len(cacheDuplicates))
 		}
 
 		// 按 GroupKey + EmbyItemID 排序后比较
@@ -211,21 +241,21 @@ func TestProperty_DuplicateDetectionSQLEquivalence(t *testing.T) {
 			}
 			return directDuplicates[i].EmbyItemID < directDuplicates[j].EmbyItemID
 		})
-		sort.Slice(sqlDuplicates, func(i, j int) bool {
-			if sqlDuplicates[i].GroupKey != sqlDuplicates[j].GroupKey {
-				return sqlDuplicates[i].GroupKey < sqlDuplicates[j].GroupKey
+		sort.Slice(cacheDuplicates, func(i, j int) bool {
+			if cacheDuplicates[i].GroupKey != cacheDuplicates[j].GroupKey {
+				return cacheDuplicates[i].GroupKey < cacheDuplicates[j].GroupKey
 			}
-			return sqlDuplicates[i].EmbyItemID < sqlDuplicates[j].EmbyItemID
+			return cacheDuplicates[i].EmbyItemID < cacheDuplicates[j].EmbyItemID
 		})
 
 		for i := range directDuplicates {
 			d := directDuplicates[i]
-			s := sqlDuplicates[i]
-			if d.GroupKey != s.GroupKey {
-				t.Fatalf("第 %d 条 GroupKey 不匹配: 纯函数=%s, SQL=%s", i, d.GroupKey, s.GroupKey)
+			c := cacheDuplicates[i]
+			if d.GroupKey != c.GroupKey {
+				t.Fatalf("第 %d 条 GroupKey 不匹配: 纯函数=%s, 缓存分析=%s", i, d.GroupKey, c.GroupKey)
 			}
-			if d.EmbyItemID != s.EmbyItemID {
-				t.Fatalf("第 %d 条 EmbyItemID 不匹配: 纯函数=%s, SQL=%s", i, d.EmbyItemID, s.EmbyItemID)
+			if d.EmbyItemID != c.EmbyItemID {
+				t.Fatalf("第 %d 条 EmbyItemID 不匹配: 纯函数=%s, 缓存分析=%s", i, d.EmbyItemID, c.EmbyItemID)
 			}
 		}
 	})

@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed, watch, onMounted, nextTick } from 'vue'
+import { useClipboard } from '@vueuse/core'
 import { useDisplay } from 'vuetify'
 import { useI18n } from 'vue-i18n'
 import { useSnackbar } from '@/composables/useSnackbar'
@@ -9,6 +10,7 @@ import api from '@/utils/api'
 const { t } = useI18n()
 const snackbar = useSnackbar()
 const { smAndDown } = useDisplay()
+const { copy: clipboardCopy } = useClipboard({ legacy: true })
 
 // LocalStorage 键名
 const STORAGE_KEY = 'rendering_words_series_list'
@@ -139,24 +141,9 @@ const previewText = computed(() => {
   return text.trim()
 })
 
-// 复制到剪贴板工具函数，优先使用 Clipboard API，失败时 fallback 到 execCommand
+// 复制到剪贴板（使用 @vueuse/core 的 useClipboard，自动处理非 HTTPS 环境的兼容性）
 async function copyToClipboard(text) {
-  if (navigator.clipboard && window.isSecureContext) {
-    await navigator.clipboard.writeText(text)
-    return
-  }
-  // Fallback: 创建临时 textarea
-  const textarea = document.createElement('textarea')
-  textarea.value = text
-  textarea.style.position = 'fixed'
-  textarea.style.left = '-9999px'
-  document.body.appendChild(textarea)
-  textarea.select()
-  try {
-    document.execCommand('copy')
-  } finally {
-    document.body.removeChild(textarea)
-  }
+  await clipboardCopy(text)
 }
 
 // 复制单条规则

@@ -531,77 +531,52 @@ func (s *ScanService) AnalyzeDuplicateMediaFromCache() (*ScanResult, error) {
 	`)
 
 	// 剧集重复检测：同一 series_id + 同季同集有多个 Episode
-	// 季号从路径提取优先，回退到 parent_index_number
-	// 集号从文件名提取优先，回退到 index_number
-	episodeSQL := `
-		INSERT INTO duplicate_media (group_key, group_name, emby_item_id, name, type, path, file_size)
-		SELECT
-			'series:' || mc.series_id || ':S' || 
-				COALESCE(CAST(
-					CASE WHEN mc.path LIKE '%/Season %/%' OR mc.path LIKE '%\Season %\%'
-					THEN CAST(SUBSTR(mc.path, 
-						INSTR(LOWER(mc.path), 'season ') + 7,
-						INSTR(SUBSTR(mc.path, INSTR(LOWER(mc.path), 'season ') + 7), '/') - 1
-					) AS INTEGER)
-					ELSE mc.parent_index_number END
-				AS TEXT), CAST(mc.parent_index_number AS TEXT))
-			|| 'E' || CAST(mc.index_number AS TEXT) AS group_key,
-			mc.series_name || ' S' || 
-				COALESCE(CAST(
-					CASE WHEN mc.path LIKE '%/Season %/%' OR mc.path LIKE '%\Season %\%'
-					THEN CAST(SUBSTR(mc.path, 
-						INSTR(LOWER(mc.path), 'season ') + 7,
-						INSTR(SUBSTR(mc.path, INSTR(LOWER(mc.path), 'season ') + 7), '/') - 1
-					) AS INTEGER)
-					ELSE mc.parent_index_number END
-				AS TEXT), CAST(mc.parent_index_number AS TEXT))
-			|| 'E' || CAST(mc.index_number AS TEXT) AS group_name,
-			mc.emby_item_id,
-			mc.name,
-			mc.type,
-			mc.path,
-			mc.file_size
-		FROM media_caches mc
-		WHERE mc.type = 'Episode'
-			AND mc.series_id != ''
-			AND ('series:' || mc.series_id || ':S' || 
-				COALESCE(CAST(
-					CASE WHEN mc.path LIKE '%/Season %/%' OR mc.path LIKE '%\Season %\%'
-					THEN CAST(SUBSTR(mc.path, 
-						INSTR(LOWER(mc.path), 'season ') + 7,
-						INSTR(SUBSTR(mc.path, INSTR(LOWER(mc.path), 'season ') + 7), '/') - 1
-					) AS INTEGER)
-					ELSE mc.parent_index_number END
-				AS TEXT), CAST(mc.parent_index_number AS TEXT))
-			|| 'E' || CAST(mc.index_number AS TEXT)) IN (
-				SELECT 'series:' || m2.series_id || ':S' || 
-					COALESCE(CAST(
-						CASE WHEN m2.path LIKE '%/Season %/%' OR m2.path LIKE '%\Season %\%'
-						THEN CAST(SUBSTR(m2.path, 
-							INSTR(LOWER(m2.path), 'season ') + 7,
-							INSTR(SUBSTR(m2.path, INSTR(LOWER(m2.path), 'season ') + 7), '/') - 1
-						) AS INTEGER)
-						ELSE m2.parent_index_number END
-					AS TEXT), CAST(m2.parent_index_number AS TEXT))
-				|| 'E' || CAST(m2.index_number AS TEXT)
-				FROM media_caches m2
-				WHERE m2.type = 'Episode' AND m2.series_id != ''
-				GROUP BY m2.series_id, 
-					COALESCE(CAST(
-						CASE WHEN m2.path LIKE '%/Season %/%' OR m2.path LIKE '%\Season %\%'
-						THEN CAST(SUBSTR(m2.path, 
-							INSTR(LOWER(m2.path), 'season ') + 7,
-							INSTR(SUBSTR(m2.path, INSTR(LOWER(m2.path), 'season ') + 7), '/') - 1
-						) AS INTEGER)
-						ELSE m2.parent_index_number END
-					AS TEXT), CAST(m2.parent_index_number AS TEXT)),
-					m2.index_number
-				HAVING COUNT(*) >= 2
-			)
-	`
-	if err := s.DB.Exec(episodeSQL).Error; err != nil {
-		log.Printf("⚠️ SQL 检测剧集重复失败: %v", err)
-		result.ErrorCount++
+	// 季号从路径 "Season N" 提取优先，回退到 parent_index_number
+	// 集号从文件名 "SxxxEyyy" 提取优先，回退到 index_number
+	// 注意：Emby 对超长剧集（如百家讲坛 Season 400+）可能返回错误的 index_number，
+	// 导致不同集被误判为重复，因此必须从文件名提取集号
+	// 使用 Go 代码处理（SQLite 不支持正则提取，纯 SQL 实现过于复杂且不可靠）
+	var episodes []model.MediaCache
+	s.DB.Where("type = ? AND series_id != ''", "Episode").Find(&episodes)
+
+	episodeGroups := make(map[string][]model.MediaCache)
+	for i := range episodes {
+		ep := &episodes[i]
+		item := ep.ToMediaItem()
+		seasonNum := resolveSeasonNumber(item)
+		episodeNum := resolveEpisodeNumber(item)
+		key := fmt.Sprintf("series:%s:S%dE%d", ep.SeriesID, seasonNum, episodeNum)
+		episodeGroups[key] = append(episodeGroups[key], *ep)
+	}
+
+	var episodeDuplicates []model.DuplicateMedia
+	for key, groupItems := range episodeGroups {
+		if len(groupItems) < 2 {
+			continue
+		}
+		first := groupItems[0]
+		firstItem := first.ToMediaItem()
+		seasonNum := resolveSeasonNumber(firstItem)
+		episodeNum := resolveEpisodeNumber(firstItem)
+		groupName := fmt.Sprintf("%s S%dE%d", first.SeriesName, seasonNum, episodeNum)
+		for _, ep := range groupItems {
+			episodeDuplicates = append(episodeDuplicates, model.DuplicateMedia{
+				GroupKey:   key,
+				GroupName:  groupName,
+				EmbyItemID: ep.EmbyItemID,
+				Name:       ep.Name,
+				Type:       ep.Type,
+				Path:       ep.Path,
+				FileSize:   ep.FileSize,
+			})
+		}
+	}
+
+	if len(episodeDuplicates) > 0 {
+		if err := batchCreateInDB(s.DB, episodeDuplicates, 500); err != nil {
+			log.Printf("⚠️ 写入剧集重复记录失败: %v", err)
+			result.ErrorCount++
+		}
 	}
 
 	// 统计重复条目数
