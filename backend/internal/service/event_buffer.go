@@ -180,3 +180,16 @@ func (eb *EventBuffer) PendingCount() int {
 	defer eb.mu.Unlock()
 	return len(eb.events)
 }
+
+// RequeueEvents 将事件放回缓冲区（用于锁被占用时重新入队）
+// 不会触发定时器，等待全量同步结束后统一协调
+func (eb *EventBuffer) RequeueEvents(events []*BufferedEvent) {
+	eb.mu.Lock()
+	defer eb.mu.Unlock()
+	for _, e := range events {
+		// 只放回 buffer 中不存在的事件（避免覆盖更新的事件）
+		if _, exists := eb.events[e.ItemID]; !exists {
+			eb.events[e.ItemID] = e
+		}
+	}
+}

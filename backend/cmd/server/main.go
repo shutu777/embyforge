@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -176,7 +177,12 @@ func main() {
 			return
 		}
 		if err := cacheService.ProcessDeltaEvents(ctx, client, syncLock, events); err != nil {
-			log.Printf("⚠️ 增量同步失败: %v", err)
+			if errors.Is(err, service.ErrSyncLockBusy) {
+				// 锁被占用（全量同步中），将事件放回缓冲区等待协调
+				eventBuffer.RequeueEvents(events)
+			} else {
+				log.Printf("⚠️ 增量同步失败: %v", err)
+			}
 		}
 	})
 

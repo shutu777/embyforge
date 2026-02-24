@@ -155,11 +155,17 @@ func (h *CacheHandler) startSync(client *emby.Client) (*activeSync, bool, string
 		h.CacheService.SyncMediaCacheWithProgress(ctx, client, progressCh)
 		cancel()
 
+		// 全量同步结束后，再取出同步期间新缓冲的事件
+		newBuffered := h.EventBuffer.DrainEvents()
+		bufferedEvents = append(bufferedEvents, newBuffered...)
+
 		// 释放同步锁
 		h.SyncLock.Unlock()
 
 		// 全量同步后协调缓冲事件
 		if len(bufferedEvents) > 0 {
+			log.Printf("🔄 全量同步后协调 %d 个缓冲事件 (同步前: %d, 同步期间: %d)",
+				len(bufferedEvents), len(bufferedEvents)-len(newBuffered), len(newBuffered))
 			reconcileCtx, reconcileCancel := context.WithTimeout(context.Background(), 10*time.Minute)
 			defer reconcileCancel()
 			h.CacheService.ReconcileBufferedEvents(reconcileCtx, client, h.SyncLock, bufferedEvents)
@@ -198,10 +204,30 @@ func (h *CacheHandler) SyncCache(c *gin.Context) {
 		return
 	}
 
+	// 获取同步锁
+	if !h.SyncLock.TryLock("full_sync") {
+		c.JSON(http.StatusConflict, gin.H{
+			"code":    409,
+			"message": fmt.Sprintf("同步锁被占用 (%s)，请稍后再试", h.SyncLock.Holder()),
+		})
+		return
+	}
+
+	// 取出缓冲事件（全量同步后协调）
+	bufferedEvents := h.EventBuffer.DrainEvents()
+
 	ctx, cancel := context.WithTimeout(c.Request.Context(), defaultSyncTimeout)
 	defer cancel()
 
 	result, err := h.CacheService.SyncMediaCacheWithContext(ctx, client)
+
+	// 全量同步结束后，再取出同步期间新缓冲的事件
+	newBuffered := h.EventBuffer.DrainEvents()
+	bufferedEvents = append(bufferedEvents, newBuffered...)
+
+	// 释放同步锁
+	h.SyncLock.Unlock()
+
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			log.Printf("⚠️ 媒体库同步超时")
@@ -219,6 +245,13 @@ func (h *CacheHandler) SyncCache(c *gin.Context) {
 			"error":   err.Error(),
 		})
 		return
+	}
+
+	// 全量同步后协调缓冲事件
+	if len(bufferedEvents) > 0 {
+		reconcileCtx, reconcileCancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer reconcileCancel()
+		h.CacheService.ReconcileBufferedEvents(reconcileCtx, client, h.SyncLock, bufferedEvents)
 	}
 
 	log.Printf("✅ 媒体库同步完成: %d 个媒体条目, %d 个季, 耗时 %dms",

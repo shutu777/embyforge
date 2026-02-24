@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -9,6 +10,9 @@ import (
 	"embyforge/internal/emby"
 	"embyforge/internal/model"
 )
+
+// ErrSyncLockBusy 同步锁被占用时返回此错误
+var ErrSyncLockBusy = errors.New("sync lock busy")
 
 // ProcessDeltaEvents 批量处理缓冲的 Webhook 事件
 // 1. 获取 SyncLock
@@ -24,8 +28,8 @@ func (s *CacheService) ProcessDeltaEvents(ctx context.Context, client *emby.Clie
 
 	// 尝试获取同步锁
 	if !syncLock.TryLock("delta_update") {
-		log.Printf("⚠️ 增量同步: 同步锁被占用 (%s)，跳过本次处理", syncLock.Holder())
-		return nil
+		log.Printf("⚠️ 增量同步: 同步锁被占用 (%s)，事件将重新入队等待协调", syncLock.Holder())
+		return ErrSyncLockBusy
 	}
 	defer syncLock.Unlock()
 
@@ -259,6 +263,10 @@ func (s *CacheService) ReconcileBufferedEvents(ctx context.Context, client *emby
 
 	log.Printf("🔄 协调后需处理 %d 个事件 (原始 %d 个)", len(reconciled), len(events))
 	if err := s.ProcessDeltaEvents(ctx, client, syncLock, reconciled); err != nil {
-		log.Printf("⚠️ 协调处理失败: %v", err)
+		if errors.Is(err, ErrSyncLockBusy) {
+			log.Printf("⚠️ 协调处理: 同步锁被占用，%d 个事件将在下次增量同步时处理", len(reconciled))
+		} else {
+			log.Printf("⚠️ 协调处理失败: %v", err)
+		}
 	}
 }

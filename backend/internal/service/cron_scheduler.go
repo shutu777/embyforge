@@ -175,6 +175,11 @@ func (cs *CronScheduler) executeSync() {
 	defer cancel()
 
 	result, err := cs.cacheService.SyncMediaCacheWithContext(ctx, client)
+
+	// 全量同步结束后，再取出同步期间新缓冲的事件
+	newBuffered := cs.eventBuffer.DrainEvents()
+	bufferedEvents = append(bufferedEvents, newBuffered...)
+
 	cs.syncLock.Unlock()
 
 	now := time.Now()
@@ -191,6 +196,8 @@ func (cs *CronScheduler) executeSync() {
 
 	// 全量同步后协调缓冲事件
 	if len(bufferedEvents) > 0 && err == nil {
+		log.Printf("⏰ Cron: 协调 %d 个缓冲事件 (同步前: %d, 同步期间: %d)",
+			len(bufferedEvents), len(bufferedEvents)-len(newBuffered), len(newBuffered))
 		cs.cacheService.ReconcileBufferedEvents(ctx, client, cs.syncLock, bufferedEvents)
 	}
 }
