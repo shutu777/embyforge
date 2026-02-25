@@ -63,6 +63,15 @@ type AuthenticationResult struct {
 	} `json:"User"`
 }
 
+// 伪装成 Emby Web UI 的 headers，让神医插件识别为用户操作并触发 deep.delete
+const (
+	fakeUserAgent     = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+	fakeClient        = "Emby Web"
+	fakeDevice        = "Google Chrome Windows"
+	fakeDeviceID      = "embyforge-web"
+	fakeClientVersion = "4.9.0.32"
+)
+
 // Client Emby API 客户端
 type Client struct {
 	Host       string
@@ -103,8 +112,9 @@ func (c *Client) AuthenticateByName(ctx context.Context, username, password stri
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	// Emby 认证需要 Authorization header
-	req.Header.Set("X-Emby-Authorization", `Emby Client="EmbyForge", Device="Server", DeviceId="embyforge", Version="1.0.0"`)
+	// 伪装成 Emby Web UI 客户端，让神医插件识别为用户操作
+	req.Header.Set("X-Emby-Authorization", fmt.Sprintf(`Emby Client="%s", Device="%s", DeviceId="%s", Version="%s"`, fakeClient, fakeDevice, fakeDeviceID, fakeClientVersion))
+	req.Header.Set("User-Agent", fakeUserAgent)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -461,8 +471,10 @@ func (c *Client) DeleteVersion(ctx context.Context, itemID string) error {
 // deleteVersionPrimary 使用主端点删除版本
 // POST /emby/Items/{itemId}/DeleteVersion
 func (c *Client) deleteVersionPrimary(ctx context.Context, itemID string) error {
-	reqURL := fmt.Sprintf("%s/emby/Items/%s/DeleteVersion", c.baseURL(), itemID)
 	token := c.getDeleteToken()
+	reqURL := fmt.Sprintf("%s/emby/Items/%s/DeleteVersion?X-Emby-Client=%s&X-Emby-Device-Name=%s&X-Emby-Device-Id=%s&X-Emby-Client-Version=%s&X-Emby-Token=%s&X-Emby-Language=zh-cn",
+		c.baseURL(), itemID,
+		url.QueryEscape(fakeClient), url.QueryEscape(fakeDevice), url.QueryEscape(fakeDeviceID), url.QueryEscape(fakeClientVersion), url.QueryEscape(token))
 
 	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, nil)
 	if err != nil {
@@ -470,6 +482,7 @@ func (c *Client) deleteVersionPrimary(ctx context.Context, itemID string) error 
 	}
 
 	req.Header.Set("X-Emby-Token", token)
+	setEmbyWebHeaders(req)
 	logDeleteRequest("删除版本", req)
 
 	resp, err := c.HTTPClient.Do(req)
@@ -505,9 +518,12 @@ func (c *Client) DeleteItem(ctx context.Context, itemID string) error {
 
 // deleteItemPrimary 使用主端点删除条目
 // POST /emby/Items/Delete?Ids={itemId}
+// 同时在 URL query 和 headers 中携带 Emby Web 客户端信息，与 Web UI 行为一致
 func (c *Client) deleteItemPrimary(ctx context.Context, itemID string) error {
-	reqURL := fmt.Sprintf("%s/emby/Items/Delete?Ids=%s", c.baseURL(), itemID)
 	token := c.getDeleteToken()
+	reqURL := fmt.Sprintf("%s/emby/Items/Delete?Ids=%s&X-Emby-Client=%s&X-Emby-Device-Name=%s&X-Emby-Device-Id=%s&X-Emby-Client-Version=%s&X-Emby-Token=%s&X-Emby-Language=zh-cn",
+		c.baseURL(), itemID,
+		url.QueryEscape(fakeClient), url.QueryEscape(fakeDevice), url.QueryEscape(fakeDeviceID), url.QueryEscape(fakeClientVersion), url.QueryEscape(token))
 
 	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, nil)
 	if err != nil {
@@ -515,6 +531,7 @@ func (c *Client) deleteItemPrimary(ctx context.Context, itemID string) error {
 	}
 
 	req.Header.Set("X-Emby-Token", token)
+	setEmbyWebHeaders(req)
 	logDeleteRequest("删除条目", req)
 
 	resp, err := c.HTTPClient.Do(req)
@@ -536,8 +553,10 @@ func (c *Client) deleteItemPrimary(ctx context.Context, itemID string) error {
 // deleteItemFallback 使用备用端点删除条目
 // DELETE /emby/Items/{itemId}
 func (c *Client) deleteItemFallback(ctx context.Context, itemID string) error {
-	reqURL := fmt.Sprintf("%s/emby/Items/%s", c.baseURL(), itemID)
 	token := c.getDeleteToken()
+	reqURL := fmt.Sprintf("%s/emby/Items/%s?X-Emby-Client=%s&X-Emby-Device-Name=%s&X-Emby-Device-Id=%s&X-Emby-Client-Version=%s&X-Emby-Token=%s&X-Emby-Language=zh-cn",
+		c.baseURL(), itemID,
+		url.QueryEscape(fakeClient), url.QueryEscape(fakeDevice), url.QueryEscape(fakeDeviceID), url.QueryEscape(fakeClientVersion), url.QueryEscape(token))
 
 	req, err := http.NewRequestWithContext(ctx, "DELETE", reqURL, nil)
 	if err != nil {
@@ -545,6 +564,7 @@ func (c *Client) deleteItemFallback(ctx context.Context, itemID string) error {
 	}
 
 	req.Header.Set("X-Emby-Token", token)
+	setEmbyWebHeaders(req)
 	logDeleteRequest("备用删除", req)
 
 	resp, err := c.HTTPClient.Do(req)
@@ -569,6 +589,16 @@ func maskToken(token string) string {
 		return "***"
 	}
 	return token[:8]
+}
+
+// setEmbyWebHeaders 为请求设置伪装成 Emby Web UI 的 headers
+func setEmbyWebHeaders(req *http.Request) {
+	req.Header.Set("User-Agent", fakeUserAgent)
+	req.Header.Set("X-Emby-Client", fakeClient)
+	req.Header.Set("X-Emby-Device-Name", fakeDevice)
+	req.Header.Set("X-Emby-Device-Id", fakeDeviceID)
+	req.Header.Set("X-Emby-Client-Version", fakeClientVersion)
+	req.Header.Set("X-Emby-Language", "zh-cn")
 }
 
 // logDeleteRequest 记录删除请求的完整信息（方法、URL、所有 Header）

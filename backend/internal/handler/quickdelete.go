@@ -34,12 +34,25 @@ func NewQuickDeleteHandler(db *gorm.DB) *QuickDeleteHandler {
 }
 
 // getEmbyClient 从数据库获取 Emby 配置并创建客户端
+// 如果配置了用户名密码，会自动进行用户认证以获取用户 token
+// 用户 token 认证的删除请求才能被神医插件识别为用户操作，触发深度删除通知
 func (h *QuickDeleteHandler) getEmbyClient() (*emby.Client, error) {
 	var config model.EmbyConfig
 	if err := h.DB.First(&config).Error; err != nil {
 		return nil, err
 	}
-	return emby.NewClient(config.Host, config.Port, config.APIKey), nil
+	client := emby.NewClient(config.Host, config.Port, config.APIKey)
+
+	// 使用用户名密码认证，获取用户 session token
+	if config.Username != "" && config.Password != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if _, err := client.AuthenticateByName(ctx, config.Username, config.Password); err != nil {
+			log.Printf("⚠️ Emby 用户认证失败，将使用 API Key: %v", err)
+		}
+	}
+
+	return client, nil
 }
 
 // SearchEmbyMedia GET /api/media-query/search - 搜索 Emby 媒体
