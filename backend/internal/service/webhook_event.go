@@ -91,10 +91,10 @@ func FormatEmbyWebhookEvent(event *EmbyWebhookEvent) string {
 	return fmt.Sprintf("[%s] %s (ID=%s, Type=%s)", event.EventType, event.ItemName, event.ItemID, event.ItemType)
 }
 
-// IsRelevantItemType 判断 item 类型是否需要处理（Movie/Series/Season/Episode）
+// IsRelevantItemType 判断 item 类型是否需要处理（Movie/Series/Episode）
 func IsRelevantItemType(itemType string) bool {
 	switch itemType {
-	case "Movie", "Series", "Season", "Episode":
+	case "Movie", "Series", "Episode":
 		return true
 	default:
 		return false

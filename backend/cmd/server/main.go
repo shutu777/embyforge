@@ -226,6 +226,7 @@ func main() {
 	renderingWordsHandler := handler.NewRenderingWordsHandler(db)
 	embyCacheHandler := handler.NewEmbyCacheHandler(db)
 	quickDeleteHandler := handler.NewQuickDeleteHandler(db)
+	tmdbSearchHandler := handler.NewTmdbSearchHandler(db)
 
 	// 初始化 Gin 引擎
 	r := gin.New()
@@ -315,6 +316,12 @@ func main() {
 		protected.POST("/symedia/refresh", symediaHandler.ManualRefresh)
 		protected.POST("/symedia/github-config-save", symediaHandler.SaveGithubConfigOnly)
 		protected.POST("/symedia/github-config", symediaHandler.SaveGithubConfig)
+		protected.POST("/symedia/transfer", symediaHandler.Transfer)
+		protected.POST("/symedia/transfer-config", symediaHandler.SaveTransferConfig)
+		protected.GET("/symedia/transfer-rules", symediaHandler.GetTransferRules)
+
+		// TMDB 搜索
+		protected.GET("/tmdb/search", tmdbSearchHandler.SearchTmdb)
 
 		// 渲染词生成器
 		protected.GET("/rendering-words/import-candidates", renderingWordsHandler.GetImportCandidates)
@@ -328,9 +335,9 @@ func main() {
 		protected.POST("/emby-cache/:id/refresh", embyCacheHandler.RefreshEmbyCache)
 
 		// 快速删除
-		protected.GET("/quick-delete/search", quickDeleteHandler.SearchEmbyMedia)
-		protected.GET("/quick-delete/seasons/:seriesId", quickDeleteHandler.GetSeriesSeasons)
-		protected.POST("/quick-delete/delete", quickDeleteHandler.DeleteMedia)
+		protected.GET("/media-query/search", quickDeleteHandler.SearchEmbyMedia)
+		protected.GET("/media-query/seasons/:seriesId", quickDeleteHandler.GetSeriesSeasons)
+		protected.POST("/media-query/delete", quickDeleteHandler.DeleteMedia)
 	}
 
 	// 启动服务

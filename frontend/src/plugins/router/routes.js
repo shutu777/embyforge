@@ -45,9 +45,9 @@ export const routes = [
         component: () => import('@/pages/emby-cache.vue'),
       },
       {
-        path: 'quick-delete',
-        name: 'quick-delete',
-        component: () => import('@/pages/quick-delete.vue'),
+        path: 'media-query',
+        name: 'media-query',
+        component: () => import('@/pages/media-query.vue'),
       },
       {
         path: 'system-config',

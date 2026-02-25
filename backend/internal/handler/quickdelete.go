@@ -42,7 +42,7 @@ func (h *QuickDeleteHandler) getEmbyClient() (*emby.Client, error) {
 	return emby.NewClient(config.Host, config.Port, config.APIKey), nil
 }
 
-// SearchEmbyMedia GET /api/quick-delete/search - 搜索 Emby 媒体
+// SearchEmbyMedia GET /api/media-query/search - 搜索 Emby 媒体
 func (h *QuickDeleteHandler) SearchEmbyMedia(c *gin.Context) {
 	keyword := strings.TrimSpace(c.Query("keyword"))
 	if keyword == "" {
@@ -122,7 +122,7 @@ func (h *QuickDeleteHandler) SearchEmbyMedia(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": results})
 }
 
-// isTmdbID 判断输入是否为 TMDB ID（纯数字）
+// isTmdbID 判断输入是否为 TMDB ID（纯数字且大于 0）
 func isTmdbID(s string) bool {
 	if len(s) == 0 {
 		return false
@@ -132,7 +132,9 @@ func isTmdbID(s string) bool {
 			return false
 		}
 	}
-	return true
+	// 排除 "0" 或全零的情况，TMDB ID 至少为 1
+	n, err := strconv.Atoi(s)
+	return err == nil && n > 0
 }
 
 // searchByTmdbID 通过 TMDB ID 搜索 Emby 媒体（电影和剧集都搜）
@@ -154,7 +156,7 @@ func (h *QuickDeleteHandler) searchByTmdbID(ctx context.Context, client *emby.Cl
 	return resp.Items, nil
 }
 
-// GetSeriesSeasons GET /api/quick-delete/seasons/:seriesId - 获取剧集的季列表
+// GetSeriesSeasons GET /api/media-query/seasons/:seriesId - 获取剧集的季列表
 func (h *QuickDeleteHandler) GetSeriesSeasons(c *gin.Context) {
 	seriesID := c.Param("seriesId")
 	if seriesID == "" {
@@ -207,7 +209,7 @@ func (h *QuickDeleteHandler) GetSeriesSeasons(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": result})
 }
 
-// DeleteMedia POST /api/quick-delete/delete - 删除媒体
+// DeleteMedia POST /api/media-query/delete - 删除媒体
 func (h *QuickDeleteHandler) DeleteMedia(c *gin.Context) {
 	var req struct {
 		EmbyItemID string            `json:"emby_item_id"`

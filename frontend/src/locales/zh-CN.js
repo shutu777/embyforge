@@ -24,7 +24,7 @@ export default {
     scrapeAnomaly: '刮削异常',
     duplicateMedia: '重复媒体',
     episodeMapping: '异常映射',
-    quickDelete: '快速删除',
+    mediaQuery: '媒体库查询',
     tmdbCache: 'TMDB 缓存',
     cacheManagement: '缓存管理',
     embyCache: 'Emby 缓存',

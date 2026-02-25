@@ -24,7 +24,7 @@ export default {
     scrapeAnomaly: 'Scrape Anomaly',
     duplicateMedia: 'Duplicate Media',
     episodeMapping: 'Episode Mapping',
-    quickDelete: 'Quick Delete',
+    mediaQuery: 'Media Query',
     tmdbCache: 'TMDB Cache',
     cacheManagement: 'Cache',
     embyCache: 'Emby Cache',

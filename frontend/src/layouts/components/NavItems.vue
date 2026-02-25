@@ -52,9 +52,9 @@ const { t } = useI18n()
   />
   <VerticalNavLink
     :item="{
-      title: t('menu.quickDelete'),
-      icon: 'ri-delete-bin-line',
-      to: '/quick-delete',
+      title: t('menu.mediaQuery'),
+      icon: 'ri-search-eye-line',
+      to: '/media-query',
     }"
   />
 

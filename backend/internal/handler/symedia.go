@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -93,6 +94,36 @@ func (h *SymediaHandler) callSymediaAPI(symediaUrl, authToken string) error {
 	return nil
 }
 
+// TransferConfigKeys 归档配置在 SystemConfig 表中的键名
+var TransferConfigKeys = map[string]string{
+	"rule_id":          "symedia_transfer_rule_id",
+	"dest_dir":         "symedia_transfer_dest_dir",
+	"transfer_type":    "symedia_transfer_type",
+	"category":         "symedia_transfer_category",
+	"delete_dir":       "symedia_transfer_delete_dir",
+	"extract_metadata": "symedia_transfer_extract_metadata",
+	"cache_metadata":   "symedia_transfer_cache_metadata",
+	"download_nfo":     "symedia_transfer_download_nfo",
+	"download_image":   "symedia_transfer_download_image",
+	"path_from":        "symedia_transfer_path_from",
+	"path_to":          "symedia_transfer_path_to",
+}
+
+// TransferConfigResponse 归档配置响应结构
+type TransferConfigResponse struct {
+	RuleID          string `json:"rule_id"`
+	DestDir         string `json:"dest_dir"`
+	TransferType    string `json:"transfer_type"`
+	Category        bool   `json:"category"`
+	DeleteDir       bool   `json:"delete_dir"`
+	ExtractMetadata bool   `json:"extract_metadata"`
+	CacheMetadata   bool   `json:"cache_metadata"`
+	DownloadNfo     bool   `json:"download_nfo"`
+	DownloadImage   bool   `json:"download_image"`
+	PathFrom        string `json:"path_from"`
+	PathTo          string `json:"path_to"`
+}
+
 // GetConfigsResponse 获取配置响应结构
 type GetConfigsResponse struct {
 	SymediaUrl string                 `json:"symedia_url"`
@@ -107,6 +138,7 @@ func (h *SymediaHandler) GetConfigs(c *gin.Context) {
 		SymediaUrl       string                `json:"symedia_url"`
 		SymediaAuthToken string                `json:"symedia_auth_token"`
 		GithubConfig     *model.WebhookConfig  `json:"github_config"`
+		TransferConfig   TransferConfigResponse `json:"transfer_config"`
 	}
 	
 	// 从SystemConfig表读取symedia_url
@@ -156,11 +188,132 @@ func (h *SymediaHandler) GetConfigs(c *gin.Context) {
 	} else {
 		response.GithubConfig = &githubConfig
 	}
+
+	// 读取归档配置
+	response.TransferConfig = h.readTransferConfig()
 	
 	log.Printf("ℹ️  [Symedia] 获取配置成功")
 	c.JSON(http.StatusOK, gin.H{
 		"data": response,
 	})
+}
+
+// boolWithDefault 从配置映射中读取布尔值，键不存在时返回默认值
+func boolWithDefault(m map[string]string, key string, defaultVal bool) bool {
+	v, ok := m[key]
+	if !ok || v == "" {
+		return defaultVal
+	}
+	return v == "true"
+}
+
+// readTransferConfig 从 SystemConfig 表读取归档配置
+func (h *SymediaHandler) readTransferConfig() TransferConfigResponse {
+	cfg := TransferConfigResponse{}
+
+	// 批量读取所有归档配置键
+	var configs []model.SystemConfig
+	keys := make([]string, 0, len(TransferConfigKeys))
+	for _, v := range TransferConfigKeys {
+		keys = append(keys, v)
+	}
+	h.DB.Where("key IN ?", keys).Find(&configs)
+
+	// 构建 key->value 映射
+	configMap := make(map[string]string)
+	for _, c := range configs {
+		configMap[c.Key] = c.Value
+	}
+
+	cfg.RuleID = configMap[TransferConfigKeys["rule_id"]]
+	cfg.DestDir = configMap[TransferConfigKeys["dest_dir"]]
+	// 归档方式默认 cd2_move
+	if v, ok := configMap[TransferConfigKeys["transfer_type"]]; ok && v != "" {
+		cfg.TransferType = v
+	} else {
+		cfg.TransferType = "cd2_move"
+	}
+	// 布尔开关：未保存过的键使用默认值
+	cfg.Category = boolWithDefault(configMap, TransferConfigKeys["category"], true)
+	cfg.DeleteDir = boolWithDefault(configMap, TransferConfigKeys["delete_dir"], false)
+	cfg.ExtractMetadata = boolWithDefault(configMap, TransferConfigKeys["extract_metadata"], true)
+	cfg.CacheMetadata = boolWithDefault(configMap, TransferConfigKeys["cache_metadata"], true)
+	cfg.DownloadNfo = boolWithDefault(configMap, TransferConfigKeys["download_nfo"], false)
+	cfg.DownloadImage = boolWithDefault(configMap, TransferConfigKeys["download_image"], false)
+	cfg.PathFrom = configMap[TransferConfigKeys["path_from"]]
+	cfg.PathTo = configMap[TransferConfigKeys["path_to"]]
+
+	return cfg
+}
+
+// SaveTransferConfigRequest 保存归档配置请求结构
+type SaveTransferConfigRequest struct {
+	RuleID          string `json:"rule_id"`
+	DestDir         string `json:"dest_dir"`
+	TransferType    string `json:"transfer_type"`
+	Category        bool   `json:"category"`
+	DeleteDir       bool   `json:"delete_dir"`
+	ExtractMetadata bool   `json:"extract_metadata"`
+	CacheMetadata   bool   `json:"cache_metadata"`
+	DownloadNfo     bool   `json:"download_nfo"`
+	DownloadImage   bool   `json:"download_image"`
+	PathFrom        string `json:"path_from"`
+	PathTo          string `json:"path_to"`
+}
+
+// SaveTransferConfig 保存归档配置
+// POST /api/symedia/transfer-config
+func (h *SymediaHandler) SaveTransferConfig(c *gin.Context) {
+	var req SaveTransferConfigRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数无效，请检查输入"})
+		return
+	}
+
+	// 验证 rule_id 非空
+	if strings.TrimSpace(req.RuleID) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "rule_id 不能为空"})
+		return
+	}
+
+	// 构建要保存的配置键值对
+	boolStr := func(b bool) string {
+		if b {
+			return "true"
+		}
+		return "false"
+	}
+
+	configPairs := map[string]string{
+		TransferConfigKeys["rule_id"]:          req.RuleID,
+		TransferConfigKeys["dest_dir"]:         req.DestDir,
+		TransferConfigKeys["transfer_type"]:    req.TransferType,
+		TransferConfigKeys["category"]:         boolStr(req.Category),
+		TransferConfigKeys["delete_dir"]:       boolStr(req.DeleteDir),
+		TransferConfigKeys["extract_metadata"]: boolStr(req.ExtractMetadata),
+		TransferConfigKeys["cache_metadata"]:   boolStr(req.CacheMetadata),
+		TransferConfigKeys["download_nfo"]:     boolStr(req.DownloadNfo),
+		TransferConfigKeys["download_image"]:   boolStr(req.DownloadImage),
+		TransferConfigKeys["path_from"]:        req.PathFrom,
+		TransferConfigKeys["path_to"]:          req.PathTo,
+	}
+
+	// 逐个保存到 SystemConfig 表
+	for key, value := range configPairs {
+		sc := model.SystemConfig{
+			Key:         key,
+			Value:       value,
+			Description: "Symedia 归档配置",
+		}
+		if err := h.DB.Where("key = ?", key).Assign(sc).FirstOrCreate(&sc).Error; err != nil {
+			log.Printf("❌ [Symedia] 保存归档配置 %s 失败: %v", key, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存配置失败，请稍后重试"})
+			return
+		}
+	}
+
+	log.Printf("✅ [Symedia] 归档配置保存成功")
+	c.JSON(http.StatusOK, gin.H{"message": "归档配置保存成功"})
 }
 
 // SaveConfigRequest 保存配置请求结构（不触发刷新）
@@ -658,4 +811,396 @@ func generateWebhookUrl() string {
 	webhookPath := fmt.Sprintf("/api/webhook/github/%s", randomPart)
 	
 	return webhookPath
+}
+
+// TransferRequest 前端提交的归档请求
+type TransferRequest struct {
+	Name      string `json:"name" binding:"required"`
+	Path      string `json:"path" binding:"required"`
+	TmdbID    int    `json:"tmdbid" binding:"required"`
+	MediaType string `json:"media_type" binding:"required"` // movie 或 tv
+	Season    *int   `json:"season"`                        // 剧集的季号，电影为 nil
+}
+
+// SymediaTransferPayload 发送给 Symedia 的完整请求体
+type SymediaTransferPayload struct {
+	Items        []SymediaTransferItem `json:"items"`
+	HistoryIDs   interface{}           `json:"history_ids"`
+	TransferForm SymediaTransferForm   `json:"transferForm"`
+}
+
+// SymediaTransferItem 归档条目
+type SymediaTransferItem struct {
+	Name     string                `json:"name"`
+	Path     string                `json:"path"`
+	Type     string                `json:"type"`
+	Size     int                   `json:"size"`
+	Mtime    int64                 `json:"mtime"`
+	Children []SymediaTransferItem `json:"children"`
+}
+
+// SymediaTransferForm 归档表单参数
+type SymediaTransferForm struct {
+	DestDir         string `json:"dest_dir"`
+	RuleID          string `json:"rule_id"`
+	TmdbID          int    `json:"tmdbid"`
+	DoubanID        *int   `json:"doubanid"`
+	Season          *int   `json:"season"`
+	MediaType       string `json:"media_type"`
+	TransferType    string `json:"transfer_type"`
+	EpisodeFormat   string `json:"episode_format"`
+	EpisodeDetail   string `json:"episode_detail"`
+	EpisodePart     string `json:"episode_part"`
+	EpisodeOffset   *int   `json:"episode_offset"`
+	MinFilesize     int    `json:"min_filesize"`
+	Suffix          string `json:"suffix"`
+	DownloadNfo     bool   `json:"download_nfo"`
+	DownloadImage   bool   `json:"download_image"`
+	Category        bool   `json:"category"`
+	DeleteDir       bool   `json:"delete_dir"`
+	ExtractMetadata bool   `json:"extract_metadata"`
+	CacheMetadata   bool   `json:"cache_metadata"`
+}
+
+// SyncMapping 软链接同步映射关系（从 Symedia sync_list 获取）
+type SyncMapping struct {
+	MediaDir   string `json:"media_dir"`   // 云盘路径，如 /CloudNAS/CloudDrive/115open/影库
+	SymlinkDir string `json:"symlink_dir"` // Emby 挂载路径，如 /media
+}
+
+// mapItemPath 使用 sync_list 映射表将 Emby 路径转换为云盘路径
+// 匹配规则：找到 Emby 路径前缀匹配的 symlink_dir，替换为对应的 media_dir
+// 优先匹配最长的 symlink_dir（最精确匹配）
+func mapItemPath(embyPath string, syncMappings []SyncMapping) string {
+	if embyPath == "" || len(syncMappings) == 0 {
+		return embyPath
+	}
+
+	bestMatch := ""
+	bestMediaDir := ""
+	for _, m := range syncMappings {
+		symlinkDir := strings.TrimRight(m.SymlinkDir, "/")
+		// Emby 路径必须以 symlink_dir 开头（精确到路径段边界）
+		if strings.HasPrefix(embyPath, symlinkDir+"/") || embyPath == symlinkDir {
+			if len(symlinkDir) > len(bestMatch) {
+				bestMatch = symlinkDir
+				bestMediaDir = strings.TrimRight(m.MediaDir, "/")
+			}
+		}
+	}
+
+	if bestMatch != "" {
+		return bestMediaDir + embyPath[len(bestMatch):]
+	}
+
+	return embyPath
+}
+
+// BuildSymediaPayload 根据前端请求和保存的配置组装 Symedia 请求体
+// syncMappings 为 Symedia sync_list 返回的路径映射表
+func BuildSymediaPayload(req TransferRequest, cfg TransferConfigResponse, syncMappings []SyncMapping) SymediaTransferPayload {
+	// 路径映射：使用 sync_list 映射表将 Emby 路径转换为云盘路径
+	itemPath := mapItemPath(req.Path, syncMappings)
+	// name 只是文件夹名，不需要路径映射
+	itemName := req.Name
+
+	item := SymediaTransferItem{
+		Name:     itemName,
+		Path:     itemPath,
+		Type:     "dir",
+		Size:     0,
+		Mtime:    time.Now().Unix(),
+		Children: []SymediaTransferItem{},
+	}
+
+	form := SymediaTransferForm{
+		DestDir:         cfg.DestDir,
+		RuleID:          cfg.RuleID,
+		TmdbID:          req.TmdbID,
+		DoubanID:        nil,
+		Season:          req.Season,
+		MediaType:       req.MediaType,
+		TransferType:    cfg.TransferType,
+		EpisodeFormat:   "",
+		EpisodeDetail:   "",
+		EpisodePart:     "",
+		EpisodeOffset:   nil,
+		MinFilesize:     0,
+		Suffix:          "",
+		DownloadNfo:     cfg.DownloadNfo,
+		DownloadImage:   cfg.DownloadImage,
+		Category:        cfg.Category,
+		DeleteDir:       cfg.DeleteDir,
+		ExtractMetadata: cfg.ExtractMetadata,
+		CacheMetadata:   cfg.CacheMetadata,
+	}
+
+	return SymediaTransferPayload{
+		Items:        []SymediaTransferItem{item},
+		HistoryIDs:   nil,
+		TransferForm: form,
+	}
+}
+
+// fetchSyncList 从 Symedia 获取软链接同步映射列表
+func (h *SymediaHandler) fetchSyncList(symediaUrl, authToken string) ([]SyncMapping, error) {
+	apiUrl := strings.TrimRight(symediaUrl, "/") + "/api/v1/autosymlink/sync_list"
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	httpReq, err := http.NewRequest("GET", apiUrl, nil)
+	if err != nil {
+		return nil, fmt.Errorf("构建请求失败: %w", err)
+	}
+
+	// 设置认证头
+	token := authToken
+	lowerToken := strings.ToLower(authToken)
+	if strings.HasPrefix(lowerToken, "bearer ") {
+		token = "Bearer " + strings.TrimSpace(authToken[7:])
+	} else {
+		token = "Bearer " + authToken
+	}
+	httpReq.Header.Set("Authorization", token)
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("无法连接到 Symedia 服务: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var rawList []json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&rawList); err != nil {
+		return nil, fmt.Errorf("解析响应失败: %w", err)
+	}
+
+	mappings := make([]SyncMapping, 0, len(rawList))
+	for _, raw := range rawList {
+		var m SyncMapping
+		if err := json.Unmarshal(raw, &m); err == nil && m.MediaDir != "" && m.SymlinkDir != "" {
+			mappings = append(mappings, m)
+		}
+	}
+	return mappings, nil
+}
+
+// Transfer 执行归档操作
+// POST /api/symedia/transfer
+func (h *SymediaHandler) Transfer(c *gin.Context) {
+	var req TransferRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数无效，请检查输入"})
+		return
+	}
+
+	// 验证 media_type
+	if req.MediaType != "movie" && req.MediaType != "tv" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "media_type 必须为 movie 或 tv"})
+		return
+	}
+
+	// 读取 Symedia URL 和 auth token
+	var symediaUrlConfig, authTokenConfig model.SystemConfig
+	if err := h.DB.Where("key = ?", "symedia_url").First(&symediaUrlConfig).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请先配置 Symedia 服务地址和认证令牌"})
+		return
+	}
+	if err := h.DB.Where("key = ?", "symedia_auth_token").First(&authTokenConfig).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请先配置 Symedia 服务地址和认证令牌"})
+		return
+	}
+
+	symediaUrl := strings.TrimSpace(symediaUrlConfig.Value)
+	authToken := strings.TrimSpace(authTokenConfig.Value)
+	if symediaUrl == "" || authToken == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请先配置 Symedia 服务地址和认证令牌"})
+		return
+	}
+
+	// 读取归档固定配置
+	transferCfg := h.readTransferConfig()
+	if strings.TrimSpace(transferCfg.RuleID) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请先配置归档规则 ID"})
+		return
+	}
+
+	// 校验 rule_id 在 Symedia 端是否仍然有效
+	rules, err := h.fetchTransferRules(symediaUrl, authToken)
+	if err != nil {
+		log.Printf("⚠️ [Symedia] 校验规则 ID 时获取规则列表失败: %v", err)
+		// 获取规则列表失败不阻塞归档，只记录日志
+	} else {
+		ruleValid := false
+		for _, r := range rules {
+			if r.RuleID == transferCfg.RuleID {
+				ruleValid = true
+				break
+			}
+		}
+		if !ruleValid {
+			log.Printf("❌ [Symedia] 归档规则 ID %s 在 Symedia 端不存在", transferCfg.RuleID)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "当前配置的归档规则在 Symedia 中已不存在，请前往「配置管理」重新选择归档规则"})
+			return
+		}
+	}
+
+	// 组装 Symedia 请求体
+	// 从 Symedia 获取软链接同步映射表，用于路径转换
+	syncMappings, err := h.fetchSyncList(symediaUrl, authToken)
+	if err != nil {
+		log.Printf("⚠️ [Symedia] 获取同步映射列表失败，路径将不做转换: %v", err)
+		syncMappings = []SyncMapping{}
+	}
+	payload := BuildSymediaPayload(req, transferCfg, syncMappings)
+	log.Printf("🔍 [Symedia] 路径映射: %q → %q (映射规则 %d 条)", req.Path, payload.Items[0].Path, len(syncMappings))
+
+	// 序列化请求体
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("❌ [Symedia] 序列化归档请求体失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "构建请求失败"})
+		return
+	}
+
+	// 构建 Symedia API URL
+	apiUrl := strings.TrimRight(symediaUrl, "/") + "/api/v1/transfer/manual"
+
+	// 创建 HTTP 客户端（60 秒超时）
+	client := &http.Client{Timeout: 60 * time.Second}
+
+	httpReq, err := http.NewRequest("POST", apiUrl, bytes.NewReader(payloadBytes))
+	if err != nil {
+		log.Printf("❌ [Symedia] 创建归档请求失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建请求失败"})
+		return
+	}
+
+	// 设置请求头
+	token := authToken
+	lowerToken := strings.ToLower(authToken)
+	if strings.HasPrefix(lowerToken, "bearer ") {
+		tokenPart := strings.TrimSpace(authToken[7:])
+		token = "Bearer " + tokenPart
+	} else {
+		token = "Bearer " + authToken
+	}
+	httpReq.Header.Set("Authorization", token)
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	log.Printf("🔄 [Symedia] 发送归档请求: name=%s, tmdbid=%d, media_type=%s", req.Name, req.TmdbID, req.MediaType)
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		log.Printf("❌ [Symedia] 归档请求失败: %v", err)
+		if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "deadline") {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Symedia 服务响应超时"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "无法连接到 Symedia 服务"})
+		}
+		return
+	}
+	defer resp.Body.Close()
+
+	// 解析 Symedia 响应
+	var symResp SymediaAPIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&symResp); err != nil {
+		log.Printf("❌ [Symedia] 解析归档响应失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "解析 Symedia 响应失败"})
+		return
+	}
+
+	if !symResp.Success {
+		log.Printf("❌ [Symedia] 归档失败: %s", symResp.Message)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": symResp.Message})
+		return
+	}
+
+	log.Printf("✅ [Symedia] 归档成功: name=%s", req.Name)
+	c.JSON(http.StatusOK, gin.H{
+		"message": "归档请求已提交",
+		"data": gin.H{
+			"success": true,
+			"message": symResp.Message,
+		},
+	})
+}
+
+// RuleItem 规则列表项（提取 id、name、rule_id 和 dest_dir）
+type RuleItem struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	RuleID  string `json:"rule_id"`
+	DestDir string `json:"dest_dir"`
+}
+
+// fetchTransferRules 从 Symedia 获取归档规则列表（内部方法）
+func (h *SymediaHandler) fetchTransferRules(symediaUrl, authToken string) ([]RuleItem, error) {
+	apiUrl := strings.TrimRight(symediaUrl, "/") + "/api/v1/system/settings/transfer_list"
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	httpReq, err := http.NewRequest("GET", apiUrl, nil)
+	if err != nil {
+		return nil, fmt.Errorf("构建请求失败: %w", err)
+	}
+
+	// 设置认证头
+	token := authToken
+	lowerToken := strings.ToLower(authToken)
+	if strings.HasPrefix(lowerToken, "bearer ") {
+		token = "Bearer " + strings.TrimSpace(authToken[7:])
+	} else {
+		token = "Bearer " + authToken
+	}
+	httpReq.Header.Set("Authorization", token)
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("无法连接到 Symedia 服务: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var rawList []json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&rawList); err != nil {
+		return nil, fmt.Errorf("解析 Symedia 响应失败: %w", err)
+	}
+
+	rules := make([]RuleItem, 0, len(rawList))
+	for _, raw := range rawList {
+		var item RuleItem
+		if err := json.Unmarshal(raw, &item); err == nil && item.ID != "" {
+			rules = append(rules, item)
+		}
+	}
+	return rules, nil
+}
+
+// GetTransferRules 从 Symedia 获取归档规则列表
+// GET /api/symedia/transfer-rules
+func (h *SymediaHandler) GetTransferRules(c *gin.Context) {
+	// 读取 Symedia URL 和 auth token
+	var symediaUrlConfig, authTokenConfig model.SystemConfig
+	if err := h.DB.Where("key = ?", "symedia_url").First(&symediaUrlConfig).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请先配置 Symedia 服务地址和认证令牌"})
+		return
+	}
+	if err := h.DB.Where("key = ?", "symedia_auth_token").First(&authTokenConfig).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请先配置 Symedia 服务地址和认证令牌"})
+		return
+	}
+
+	symediaUrl := symediaUrlConfig.Value
+	authToken := authTokenConfig.Value
+
+	if strings.TrimSpace(symediaUrl) == "" || strings.TrimSpace(authToken) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请先配置 Symedia 服务地址和认证令牌"})
+		return
+	}
+
+	rules, err := h.fetchTransferRules(symediaUrl, authToken)
+	if err != nil {
+		log.Printf("❌ [Symedia] 获取规则列表失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": rules})
 }
