@@ -748,7 +748,7 @@ onMounted(async () => {
                   <VTextField
                     v-model="transferForm.path_from"
                     label="Emby 路径前缀"
-                    placeholder="/volume1/Video/Strm-Sa"
+                    placeholder="/video/Strm"
                     persistent-hint
                     hint="Emby 媒体库中的路径前缀（被替换的部分）"
                   >
