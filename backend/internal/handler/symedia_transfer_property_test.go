@@ -301,3 +301,133 @@ func TestProperty_SymediaPayloadAssemblyCorrectness(t *testing.T) {
 		}
 	})
 }
+
+// TestPathReplacement_ManualConfig 测试 path_from/path_to 手动路径替换逻辑
+func TestPathReplacement_ManualConfig(t *testing.T) {
+	tests := []struct {
+		name       string
+		embyPath   string
+		pathFrom   string
+		pathTo     string
+		syncList   []SyncMapping
+		wantPath   string
+	}{
+		{
+			name:     "手动替换：正常前缀匹配",
+			embyPath: "/volume1/Video/Strm-Sa/电视剧/东南亚/冰冻情人节 (2026) {tmdb-307833}",
+			pathFrom: "/volume1/Video/Strm-Sa",
+			pathTo:   "/CloudNAS/CloudDrive/115open/Video",
+			wantPath: "/CloudNAS/CloudDrive/115open/Video/电视剧/东南亚/冰冻情人节 (2026) {tmdb-307833}",
+		},
+		{
+			name:     "手动替换：path_from 带尾部斜杠",
+			embyPath: "/volume1/Video/Strm-Sa/电视剧/韩剧/废柴舅舅 (2021) {tmdb-135605}",
+			pathFrom: "/volume1/Video/Strm-Sa/",
+			pathTo:   "/CloudNAS/CloudDrive/115open/Video/",
+			wantPath: "/CloudNAS/CloudDrive/115open/Video/电视剧/韩剧/废柴舅舅 (2021) {tmdb-135605}",
+		},
+		{
+			name:     "手动替换：路径完全等于 path_from",
+			embyPath: "/volume1/Video/Strm-Sa",
+			pathFrom: "/volume1/Video/Strm-Sa",
+			pathTo:   "/CloudNAS/CloudDrive/115open/Video",
+			wantPath: "/CloudNAS/CloudDrive/115open/Video",
+		},
+		{
+			name:     "手动替换优先于 sync_list",
+			embyPath: "/volume1/Video/Strm-Sa/电视剧/测试",
+			pathFrom: "/volume1/Video/Strm-Sa",
+			pathTo:   "/CloudNAS/正确路径",
+			syncList: []SyncMapping{
+				{SymlinkDir: "/volume1/Video/Strm-Sa", MediaDir: "/错误路径"},
+			},
+			wantPath: "/CloudNAS/正确路径/电视剧/测试",
+		},
+		{
+			name:     "都留空：回退到 sync_list",
+			embyPath: "/media/电视剧/测试",
+			pathFrom: "",
+			pathTo:   "",
+			syncList: []SyncMapping{
+				{SymlinkDir: "/media", MediaDir: "/CloudNAS/CloudDrive/115open/Video"},
+			},
+			wantPath: "/CloudNAS/CloudDrive/115open/Video/电视剧/测试",
+		},
+		{
+			name:     "都留空且无 sync_list：路径不变",
+			embyPath: "/CloudNAS/CloudDrive/115open/Video/电视剧/测试",
+			pathFrom: "",
+			pathTo:   "",
+			syncList: []SyncMapping{},
+			wantPath: "/CloudNAS/CloudDrive/115open/Video/电视剧/测试",
+		},
+		{
+			name:     "只填 path_from 没填 path_to：回退到 sync_list",
+			embyPath: "/media/电视剧/测试",
+			pathFrom: "/media",
+			pathTo:   "",
+			syncList: []SyncMapping{
+				{SymlinkDir: "/media", MediaDir: "/CloudNAS/Video"},
+			},
+			wantPath: "/CloudNAS/Video/电视剧/测试",
+		},
+		{
+			name:     "只填 path_to 没填 path_from：回退到 sync_list",
+			embyPath: "/media/电视剧/测试",
+			pathFrom: "",
+			pathTo:   "/CloudNAS/Video",
+			syncList: []SyncMapping{
+				{SymlinkDir: "/media", MediaDir: "/CloudNAS/Video"},
+			},
+			wantPath: "/CloudNAS/Video/电视剧/测试",
+		},
+		{
+			name:     "手动配置了但前缀不匹配：路径不变，不走 sync_list",
+			embyPath: "/other/path/电视剧/测试",
+			pathFrom: "/volume1/Video/Strm-Sa",
+			pathTo:   "/CloudNAS/CloudDrive/115open/Video",
+			syncList: []SyncMapping{
+				{SymlinkDir: "/other/path", MediaDir: "/不应该匹配"},
+			},
+			wantPath: "/other/path/电视剧/测试",
+		},
+		{
+			name:     "path_from 带空格：trim 后正常工作",
+			embyPath: "/volume1/Video/Strm-Sa/电视剧/测试",
+			pathFrom: "  /volume1/Video/Strm-Sa  ",
+			pathTo:   "  /CloudNAS/CloudDrive/115open/Video  ",
+			wantPath: "/CloudNAS/CloudDrive/115open/Video/电视剧/测试",
+		},
+		{
+			name:     "防止部分路径段匹配：path_from 是另一个路径的前缀子串",
+			embyPath: "/volume1/Video/Strm-Sa2/电视剧/测试",
+			pathFrom: "/volume1/Video/Strm-Sa",
+			pathTo:   "/CloudNAS/Video",
+			syncList: []SyncMapping{},
+			wantPath: "/volume1/Video/Strm-Sa2/电视剧/测试",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := TransferRequest{
+				Name:      "测试",
+				Path:      tt.embyPath,
+				TmdbID:    12345,
+				MediaType: "tv",
+			}
+			cfg := TransferConfigResponse{
+				RuleID:       "test-rule",
+				DestDir:      "/dest",
+				TransferType: "cd2_move",
+				PathFrom:     tt.pathFrom,
+				PathTo:       tt.pathTo,
+			}
+			payload := BuildSymediaPayload(req, cfg, tt.syncList)
+			got := payload.Items[0].Path
+			if got != tt.wantPath {
+				t.Errorf("路径不匹配:\n  got:  %q\n  want: %q", got, tt.wantPath)
+			}
+		})
+	}
+}

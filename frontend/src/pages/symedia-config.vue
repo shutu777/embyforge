@@ -737,6 +737,42 @@ onMounted(async () => {
               </VRow>
             </VCol>
 
+            <!-- 路径替换配置 -->
+            <VCol cols="12" class="mt-2">
+              <div class="text-subtitle-2 text-medium-emphasis mb-3">路径替换（可选）</div>
+              <div class="text-caption text-medium-emphasis mb-3">
+                Emby 路径前缀替换为云盘路径前缀，留空则使用 Symedia sync_list 自动映射
+              </div>
+              <VRow>
+                <VCol cols="12" md="6">
+                  <VTextField
+                    v-model="transferForm.path_from"
+                    label="Emby 路径前缀"
+                    placeholder="/volume1/Video/Strm-Sa"
+                    persistent-hint
+                    hint="Emby 媒体库中的路径前缀（被替换的部分）"
+                  >
+                    <template #prepend-inner>
+                      <VIcon icon="ri-folder-transfer-line" size="20" />
+                    </template>
+                  </VTextField>
+                </VCol>
+                <VCol cols="12" md="6">
+                  <VTextField
+                    v-model="transferForm.path_to"
+                    label="云盘路径前缀"
+                    placeholder="/CloudNAS/CloudDrive/115open/Video"
+                    persistent-hint
+                    hint="SA 实际需要的云盘路径前缀（替换后的部分）"
+                  >
+                    <template #prepend-inner>
+                      <VIcon icon="ri-cloud-line" size="20" />
+                    </template>
+                  </VTextField>
+                </VCol>
+              </VRow>
+            </VCol>
+
             <VCol cols="12" class="mt-2">
               <VBtn
                 color="warning"

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"embyforge/internal/emby"
@@ -1403,7 +1404,8 @@ func (h *ScanHandler) GetEpisodeMappingAnomalies(c *gin.Context) {
 }
 
 // DeleteEpisodeMappingAnomaly DELETE /api/scan/episode-mapping - 删除异常映射记录
-// 支持按 emby_item_id 删除整组，或按 emby_item_id + season_number 删除单季
+// 支持按 emby_item_id 删除整组（删除整个 Series），或按 emby_item_id + season_number 删除单季
+// 会调用 Emby API 删除实际媒体文件，然后清理相关缓存记录
 func (h *ScanHandler) DeleteEpisodeMappingAnomaly(c *gin.Context) {
 	var req struct {
 		EmbyItemID   string `json:"emby_item_id" binding:"required"`
@@ -1417,43 +1419,95 @@ func (h *ScanHandler) DeleteEpisodeMappingAnomaly(c *gin.Context) {
 		return
 	}
 
-	var result *gorm.DB
-	if req.SeasonNumber != nil {
-		// 删除指定季
-		result = h.DB.Where("emby_item_id = ? AND season_number = ?", req.EmbyItemID, *req.SeasonNumber).
-			Delete(&model.EpisodeMappingAnomaly{})
-	} else {
-		// 删除整组
-		result = h.DB.Where("emby_item_id = ?", req.EmbyItemID).
-			Delete(&model.EpisodeMappingAnomaly{})
-	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Minute)
+	defer cancel()
 
-	if result.Error != nil {
-		log.Printf("❌ 删除异常映射失败 [%s]: %v", req.EmbyItemID, result.Error)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "删除失败",
-			"error":   result.Error.Error(),
-		})
-		return
-	}
-
-	if result.RowsAffected == 0 {
-		c.JSON(http.StatusNotFound, gin.H{
-			"code":    404,
-			"message": "未找到匹配的异常映射记录",
+	client, err := h.getEmbyClientWithAuth(ctx)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "请先配置 Emby 服务器连接信息（删除操作需要配置用户名密码）",
+			"error":   err.Error(),
 		})
 		return
 	}
 
 	if req.SeasonNumber != nil {
-		log.Printf("🗑️ 删除异常映射: %s Season %d (%d 条)", req.EmbyItemID, *req.SeasonNumber, result.RowsAffected)
+		// 删除单季：需要找到真实的 Emby season ID
+		realSeasonID := ""
+
+		// 先从 season_cache 查找
+		var seasonCache model.SeasonCache
+		if err := h.DB.Where("series_emby_item_id = ? AND season_number = ?", req.EmbyItemID, *req.SeasonNumber).
+			First(&seasonCache).Error; err == nil {
+			// 检查是否是合成 ID（包含 _S）
+			if !strings.Contains(seasonCache.SeasonEmbyItemID, "_S") {
+				realSeasonID = seasonCache.SeasonEmbyItemID
+			}
+		}
+
+		// 如果没有真实 ID，通过 Emby API 查询
+		if realSeasonID == "" {
+			seasons, err := client.GetChildItems(req.EmbyItemID, "Season")
+			if err != nil {
+				log.Printf("⚠️ 查询 Emby Season 列表失败 [%s]: %v", req.EmbyItemID, err)
+			} else {
+				for _, s := range seasons {
+					if s.IndexNumber == *req.SeasonNumber {
+						realSeasonID = s.ID
+						break
+					}
+				}
+			}
+		}
+
+		if realSeasonID == "" {
+			log.Printf("⚠️ 未找到 [%s] S%d 的真实 Emby ID，仅删除异常记录", req.EmbyItemID, *req.SeasonNumber)
+		} else {
+			// 调用 Emby API 删除该季
+			if err := client.DeleteItem(ctx, realSeasonID); err != nil {
+				log.Printf("❌ 调用 Emby 删除季失败 [%s] S%d (season_emby_id: %s): %v",
+					req.EmbyItemID, *req.SeasonNumber, realSeasonID, err)
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"code":    500,
+					"message": "调用 Emby 删除失败: " + err.Error(),
+				})
+				return
+			}
+			log.Printf("🗑️ 已通过 Emby API 删除季 [%s] S%d (season_emby_id: %s)",
+				req.EmbyItemID, *req.SeasonNumber, realSeasonID)
+		}
+
+		// 清理缓存记录
+		h.DB.Where("series_emby_item_id = ? AND season_number = ?", req.EmbyItemID, *req.SeasonNumber).
+			Delete(&model.SeasonCache{})
+		h.DB.Where("emby_item_id = ? AND season_number = ?", req.EmbyItemID, *req.SeasonNumber).
+			Delete(&model.EpisodeMappingAnomaly{})
+
+		log.Printf("🗑️ 删除异常映射: %s Season %d", req.EmbyItemID, *req.SeasonNumber)
 	} else {
-		log.Printf("🗑️ 删除异常映射: %s 整组 (%d 条)", req.EmbyItemID, result.RowsAffected)
+		// 删除整组：调用 Emby API 删除整个 Series
+		if err := client.DeleteItem(ctx, req.EmbyItemID); err != nil {
+			log.Printf("❌ 调用 Emby 删除 Series 失败 [%s]: %v", req.EmbyItemID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"code":    500,
+				"message": "调用 Emby 删除失败: " + err.Error(),
+			})
+			return
+		}
+		log.Printf("🗑️ 已通过 Emby API 删除 Series [%s]", req.EmbyItemID)
+
+		// 清理所有相关缓存记录
+		h.DB.Where("emby_item_id = ?", req.EmbyItemID).Delete(&model.EpisodeMappingAnomaly{})
+		h.DB.Where("series_emby_item_id = ?", req.EmbyItemID).Delete(&model.SeasonCache{})
+		h.DB.Where("emby_item_id = ?", req.EmbyItemID).Delete(&model.MediaCache{})
+		h.DB.Where("emby_item_id = ?", req.EmbyItemID).Delete(&model.DuplicateMedia{})
+		h.DB.Where("emby_item_id = ?", req.EmbyItemID).Delete(&model.ScrapeAnomaly{})
+
+		log.Printf("🗑️ 删除异常映射: %s 整组及相关缓存", req.EmbyItemID)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":       "删除成功",
-		"deleted_count": result.RowsAffected,
+		"message": "删除成功",
 	})
 }

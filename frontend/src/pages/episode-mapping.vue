@@ -277,9 +277,9 @@ async function confirmDelete() {
 function getDeleteConfirmText() {
   if (!deleteTarget.value) return ''
   if (deleteTarget.value.seasonNumber !== undefined) {
-    return `确定要删除「${deleteTarget.value.name}」的 Season ${deleteTarget.value.seasonNumber} 异常记录吗？`
+    return `确定要删除「${deleteTarget.value.name}」的 Season ${deleteTarget.value.seasonNumber} 吗？\n此操作会调用 Emby 删除实际媒体文件，并清除相关缓存记录。`
   }
-  return `确定要删除「${deleteTarget.value.name}」的所有异常映射记录吗？`
+  return `确定要删除「${deleteTarget.value.name}」的所有季吗？\n此操作会调用 Emby 删除实际媒体文件，并清除相关缓存记录。`
 }
 
 onMounted(async () => {
@@ -599,8 +599,7 @@ onMounted(async () => {
       <VCard data-no-hover>
         <VCardTitle class="text-body-1 font-weight-semibold pa-4">确认删除</VCardTitle>
         <VCardText class="pa-4 pt-0">
-          <div class="text-body-2">{{ getDeleteConfirmText() }}</div>
-          <div class="text-caption text-medium-emphasis mt-2">此操作仅删除异常映射记录，不会影响 Emby 中的实际媒体文件。</div>
+          <div class="text-body-2" style="white-space: pre-line;">{{ getDeleteConfirmText() }}</div>
         </VCardText>
         <VCardActions class="pa-4 pt-0">
           <VSpacer />

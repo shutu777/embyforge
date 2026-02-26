@@ -899,8 +899,18 @@ func mapItemPath(embyPath string, syncMappings []SyncMapping) string {
 // BuildSymediaPayload 根据前端请求和保存的配置组装 Symedia 请求体
 // syncMappings 为 Symedia sync_list 返回的路径映射表
 func BuildSymediaPayload(req TransferRequest, cfg TransferConfigResponse, syncMappings []SyncMapping) SymediaTransferPayload {
-	// 路径映射：使用 sync_list 映射表将 Emby 路径转换为云盘路径
-	itemPath := mapItemPath(req.Path, syncMappings)
+	// 路径映射优先级：path_from/path_to 手动配置 > sync_list 自动映射
+	itemPath := req.Path
+	pathFrom := strings.TrimRight(strings.TrimSpace(cfg.PathFrom), "/")
+	pathTo := strings.TrimRight(strings.TrimSpace(cfg.PathTo), "/")
+	if pathFrom != "" && pathTo != "" && (strings.HasPrefix(itemPath, pathFrom+"/") || itemPath == pathFrom) {
+		// 使用手动配置的路径替换规则
+		itemPath = pathTo + itemPath[len(pathFrom):]
+	} else if pathFrom == "" || pathTo == "" {
+		// 未配置手动替换，回退到 sync_list 自动映射
+		itemPath = mapItemPath(itemPath, syncMappings)
+	}
+	// else: pathFrom/pathTo 已配置但前缀不匹配，保持原路径不变
 	// name 只是文件夹名，不需要路径映射
 	itemName := req.Name
 
