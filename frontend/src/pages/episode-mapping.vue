@@ -491,9 +491,9 @@ onMounted(async () => {
                     <div class="d-flex align-center gap-2">
                       <VChip size="small" color="warning">{{ group.season_count }} 季异常</VChip>
                       <VChip size="small" color="info" variant="tonal" class="copyable" @click.stop="copyText(String(group.tmdb_id), 'TMDB ' + group.tmdb_id)">TMDB {{ group.tmdb_id }}</VChip>
+                      <VChip size="small" color="purple" variant="tonal" class="copyable" @click.stop="copyText(group.name, group.name)">{{ group.name }}</VChip>
                     </div>
                     <div class="d-flex align-center gap-2">
-                      <span class="text-body-2 font-weight-medium panel-title-name copyable" @click.stop="copyText(group.name, group.name)">{{ group.name }}</span>
                       <VBtn
                         icon
                         size="x-small"
