@@ -283,7 +283,8 @@ function selectAll() {
 // 取消全选
 function cancelSelectAll() {
   selectAllMode.value = false
-  selectedItems.value = []
+  // 恢复当前页默认选中的 should_delete 项
+  selectedItems.value = allDeletableItems.value.map(i => i.emby_item_id)
 }
 
 // 执行批量删除

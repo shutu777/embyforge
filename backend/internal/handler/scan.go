@@ -739,6 +739,36 @@ func (h *ScanHandler) PreviewDuplicateCleanup(c *gin.Context) {
 	var totalGroups int64
 	h.DB.Model(&model.DuplicateMedia{}).Select("DISTINCT group_key").Count(&totalGroups)
 
+	// 计算全局待删除总数和释放空间（跨所有页）
+	// 每组中除了最大文件外的都是待删除项
+	var allGroupKeys []string
+	h.DB.Model(&model.DuplicateMedia{}).
+		Select("DISTINCT group_key").
+		Pluck("group_key", &allGroupKeys)
+
+	globalDeleteCount := 0
+	var globalFreedSize int64
+	if len(allGroupKeys) > 0 {
+		// 获取所有重复记录
+		var allDuplicates []model.DuplicateMedia
+		h.DB.Order("group_key ASC, file_size ASC").Find(&allDuplicates)
+
+		allItemsByKey := make(map[string][]model.DuplicateMedia)
+		for _, d := range allDuplicates {
+			allItemsByKey[d.GroupKey] = append(allItemsByKey[d.GroupKey], d)
+		}
+		for _, items := range allItemsByKey {
+			if len(items) < 2 {
+				continue
+			}
+			// 最后一个是最大的（保留），其余删除
+			for i := 0; i < len(items)-1; i++ {
+				globalDeleteCount++
+				globalFreedSize += items[i].FileSize
+			}
+		}
+	}
+
 	// 分页获取分组键
 	var groups []groupInfo
 	offset := (page - 1) * pageSize
@@ -824,8 +854,8 @@ func (h *ScanHandler) PreviewDuplicateCleanup(c *gin.Context) {
 		"total_groups":       totalGroups,
 		"page":               page,
 		"page_size":          pageSize,
-		"total_delete_count": totalDeleteCount,
-		"total_freed_size":   totalFreedSize,
+		"total_delete_count": globalDeleteCount,
+		"total_freed_size":   globalFreedSize,
 	})
 }
 
