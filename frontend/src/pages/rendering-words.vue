@@ -375,7 +375,7 @@ async function importSeries(candidate) {
     name: candidate.name,
     tmdbId: String(candidate.tmdb_id),
     type: 'tv',
-    rules: candidate.recommended_rules.map(rule => ({
+    rules: (candidate.recommended_rules || []).map(rule => ({
       id: uuidv4(),
       sourceSeason: String(rule.source_season),
       sourceEpisodes: rule.source_episodes,

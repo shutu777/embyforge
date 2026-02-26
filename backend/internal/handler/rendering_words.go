@@ -147,8 +147,8 @@ func (h *RenderingWordsHandler) GetImportCandidates(c *gin.Context) {
 		for embyItemID, info := range seriesInfoMap {
 			localSeasons := seasonMap[embyItemID]
 
-			var seasonInfos []SeasonInfo
-			var recommendedRules []MappingRule
+			seasonInfos := make([]SeasonInfo, 0)
+			recommendedRules := make([]MappingRule, 0)
 
 			// 收集本地季信息（跳过特别篇）
 			for _, season := range localSeasons {
@@ -256,8 +256,103 @@ func (h *RenderingWordsHandler) GetImportCandidates(c *gin.Context) {
 					})
 					cumulativeEpisodes += tmdbEpCount
 				}
+			} else if info.LocalSeasonCount > 1 && info.TmdbSeasonCount > 1 {
+				// 场景3：本地多季 vs TMDB多季但数量不同
+				// 尝试按顺序对齐：本地季数 > TMDB 季数时，多出的本地季合并到 TMDB 最后一季
+				// 本地季数 < TMDB 季数时，暂不处理（用户手动配置）
+				tmdbSeasons := tmdbMap[info.TmdbID]
+				if tmdbSeasons == nil {
+					tmdbSeasons = make(map[int]int)
+				}
+
+				// 获取 TMDB 季号排序
+				tmdbSeasonNums := make([]int, 0, len(tmdbSeasons))
+				for sn := range tmdbSeasons {
+					if sn > 0 {
+						tmdbSeasonNums = append(tmdbSeasonNums, sn)
+					}
+				}
+				sort.Ints(tmdbSeasonNums)
+
+				if info.LocalSeasonCount > info.TmdbSeasonCount && len(tmdbSeasonNums) > 0 {
+					// 本地季数多于 TMDB：多出的本地季映射到 TMDB 最后一季
+					// 例：本地 S1(12)+S2(12)+S3(12)，TMDB S1(12)+S2(24)
+					// 规则：s=3, e=1-12 => s=2, e=EP+12
+					lastTmdbSN := tmdbSeasonNums[len(tmdbSeasonNums)-1]
+					// 计算 TMDB 最后一季之前的累计集数
+					cumulativeOffset := 0
+					for _, sn := range tmdbSeasonNums {
+						if sn < lastTmdbSN {
+							cumulativeOffset += tmdbSeasons[sn]
+						}
+					}
+
+					// 找到本地中与 TMDB 最后一季对应的起始季
+					// 假设前面的季是一一对应的
+					localStartSeason := lastTmdbSN
+					localCumulative := 0
+					for _, season := range localSeasons {
+						if season.SeasonNumber <= 0 || season.SeasonNumber < localStartSeason {
+							continue
+						}
+						if season.SeasonNumber == localStartSeason {
+							// 第一个对应季，跳过（已经是正确映射）
+							localCumulative = season.EpisodeCount
+							continue
+						}
+						// 后续本地季映射到 TMDB 最后一季
+						recommendedRules = append(recommendedRules, MappingRule{
+							SourceSeason:   season.SeasonNumber,
+							SourceEpisodes: "1-" + strconv.Itoa(season.EpisodeCount),
+							TargetSeason:   lastTmdbSN,
+							Offset:         "EP+" + strconv.Itoa(localCumulative),
+						})
+						localCumulative += season.EpisodeCount
+					}
+				} else if info.LocalSeasonCount < info.TmdbSeasonCount && len(tmdbSeasonNums) > 0 {
+					// 本地季数少于 TMDB：本地最后一季可能需要拆分
+					// 例：本地 S1(12)+S2(24)，TMDB S1(12)+S2(12)+S3(12)
+					// 规则：s=2, e=13-24 => s=3, e=EP-12
+					lastLocalSN := 0
+					lastLocalEpCount := 0
+					for _, season := range localSeasons {
+						if season.SeasonNumber > 0 && season.SeasonNumber > lastLocalSN {
+							lastLocalSN = season.SeasonNumber
+							lastLocalEpCount = season.EpisodeCount
+						}
+					}
+
+					if lastLocalSN > 0 {
+						// 从 TMDB 中找到本地最后一季之后的季
+						cumulativeEpisodes := 0
+						for _, tmdbSN := range tmdbSeasonNums {
+							tmdbEpCount := tmdbSeasons[tmdbSN]
+							if tmdbSN <= lastLocalSN {
+								if tmdbSN == lastLocalSN {
+									cumulativeEpisodes = tmdbEpCount
+								}
+								continue
+							}
+							// TMDB 多出的季
+							epStart := cumulativeEpisodes + 1
+							epEnd := cumulativeEpisodes + tmdbEpCount
+							if epEnd > lastLocalEpCount {
+								epEnd = lastLocalEpCount
+							}
+							if epStart > lastLocalEpCount {
+								break
+							}
+							recommendedRules = append(recommendedRules, MappingRule{
+								SourceSeason:   lastLocalSN,
+								SourceEpisodes: strconv.Itoa(epStart) + "-" + strconv.Itoa(epEnd),
+								TargetSeason:   tmdbSN,
+								Offset:         "EP-" + strconv.Itoa(cumulativeEpisodes),
+							})
+							cumulativeEpisodes += tmdbEpCount
+						}
+					}
+				}
 			}
-			// 场景3：本地多季 vs TMDB多季但数量不同，暂不自动生成规则，用户手动配置
 
 			candidates = append(candidates, ImportCandidate{
 				EmbyItemID:       embyItemID,
