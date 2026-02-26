@@ -3,8 +3,10 @@ import { ref, computed, onMounted } from 'vue'
 import { useDisplay } from 'vuetify'
 import api from '@/utils/api'
 import { useSnackbar } from '@/composables/useSnackbar'
+import { useCopyToClipboard } from '@/composables/useCopyToClipboard'
 
 const snackbar = useSnackbar()
+const { copyText } = useCopyToClipboard()
 const { smAndDown } = useDisplay()
 const page = ref(1)
 const pageSize = ref(20)
@@ -201,9 +203,9 @@ onMounted(async () => { await Promise.all([fetchList(), fetchCacheStatus()]) })
                 <div class="panel-title-content">
                   <div class="d-flex align-center gap-2">
                     <VChip size="small" color="primary">{{ group.season_count }} 季</VChip>
-                    <VChip size="small" color="info" variant="tonal">TMDB {{ group.tmdb_id }}</VChip>
+                    <VChip size="small" color="info" variant="tonal" class="copyable" @click.stop="copyText(String(group.tmdb_id), 'TMDB ' + group.tmdb_id)">TMDB {{ group.tmdb_id }}</VChip>
                   </div>
-                  <span class="text-body-2 font-weight-medium panel-title-name">{{ group.name }}</span>
+                  <span class="text-body-2 font-weight-medium panel-title-name copyable" @click.stop="copyText(group.name, group.name)">{{ group.name }}</span>
                 </div>
               </VExpansionPanelTitle>
               <VExpansionPanelText>

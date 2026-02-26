@@ -4,10 +4,12 @@ import { useDisplay } from 'vuetify'
 import api from '@/utils/api'
 import { useSnackbar } from '@/composables/useSnackbar'
 import { useEmbyUrl } from '@/composables/useEmbyUrl'
+import { useCopyToClipboard } from '@/composables/useCopyToClipboard'
 
 const snackbar = useSnackbar()
 const { smAndDown } = useDisplay()
 const { detectEmbyUrl, embyWebUrl } = useEmbyUrl()
+const { copyText } = useCopyToClipboard()
 
 // 表格数据
 const anomalies = ref([])
@@ -527,7 +529,7 @@ onMounted(async () => {
           <div v-if="anomalies.length > 0 && smAndDown" class="mobile-items">
             <div v-for="item in anomalies" :key="item.id" class="mobile-item pa-3">
               <div class="d-flex align-center justify-space-between mb-2">
-                <span class="text-body-2 font-weight-medium text-truncate me-2">{{ item.name }}</span>
+                <span class="text-body-2 font-weight-medium text-truncate me-2 copyable" @click.stop="copyText(item.name, item.name)">{{ item.name }}</span>
                 <VChip size="x-small" :color="item.type === 'Movie' ? 'primary' : 'info'" variant="tonal" class="flex-shrink-0">
                   {{ item.type === 'Movie' ? '电影' : '剧集' }}
                 </VChip>
@@ -568,7 +570,7 @@ onMounted(async () => {
               </thead>
               <tbody>
                 <tr v-for="item in anomalies" :key="item.id">
-                  <td>{{ item.name }}</td>
+                  <td><span class="copyable" @click.stop="copyText(item.name, item.name)">{{ item.name }}</span></td>
                   <td>
                     <VChip size="small" :color="item.type === 'Movie' ? 'primary' : 'info'" variant="tonal">
                       {{ item.type === 'Movie' ? '电影' : '剧集' }}

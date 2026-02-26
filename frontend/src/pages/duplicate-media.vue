@@ -4,10 +4,12 @@ import { useDisplay } from 'vuetify'
 import api from '@/utils/api'
 import { useSnackbar } from '@/composables/useSnackbar'
 import { useEmbyUrl } from '@/composables/useEmbyUrl'
+import { useCopyToClipboard } from '@/composables/useCopyToClipboard'
 
 const snackbar = useSnackbar()
 const { smAndDown } = useDisplay()
 const { detectEmbyUrl, embyWebUrl } = useEmbyUrl()
+const { copyText } = useCopyToClipboard()
 
 // 数据
 const groupList = ref([])
@@ -38,6 +40,11 @@ const selectedItems = ref([])    // 选中要删除的 emby_item_id 集合
 const previewPage = ref(1)
 const previewPageSize = ref(50)
 const previewTotalGroups = ref(0)
+
+// 全选模式（跨页）
+const selectAllMode = ref(false)
+const totalDeleteCount = ref(0)
+const totalFreedSize = ref(0)
 
 // Emby 配置（由 useEmbyUrl 全局管理）
 
@@ -210,6 +217,9 @@ async function openCleanDialog() {
   showCleanDialog.value = true
   previewPage.value = 1
   selectedItems.value = []
+  selectAllMode.value = false
+  totalDeleteCount.value = 0
+  totalFreedSize.value = 0
   await fetchPreviewPage()
 }
 
@@ -223,14 +233,18 @@ async function fetchPreviewPage() {
     })
     previewGroups.value = data.data || []
     previewTotalGroups.value = data.total_groups || 0
-    // 默认选中当前页所有 should_delete 的条目（保留之前页的选择）
-    const pageDeleteIds = previewGroups.value
-      .flatMap(g => g.items.filter(i => i.should_delete))
-      .map(i => i.emby_item_id)
-    // 合并到已选集合（去重）
-    const existingSet = new Set(selectedItems.value)
-    pageDeleteIds.forEach(id => existingSet.add(id))
-    selectedItems.value = [...existingSet]
+    totalDeleteCount.value = data.total_delete_count || 0
+    totalFreedSize.value = data.total_freed_size || 0
+    // 非全选模式下，默认选中当前页所有 should_delete 的条目（保留之前页的选择）
+    if (!selectAllMode.value) {
+      const pageDeleteIds = previewGroups.value
+        .flatMap(g => g.items.filter(i => i.should_delete))
+        .map(i => i.emby_item_id)
+      // 合并到已选集合（去重）
+      const existingSet = new Set(selectedItems.value)
+      pageDeleteIds.forEach(id => existingSet.add(id))
+      selectedItems.value = [...existingSet]
+    }
   } catch (e) {
     snackbar.error('获取待清理列表失败')
     showCleanDialog.value = false
@@ -261,26 +275,52 @@ function toggleSelectAll() {
   }
 }
 
+// 选择全部（跨页）
+function selectAll() {
+  selectAllMode.value = true
+}
+
+// 取消全选
+function cancelSelectAll() {
+  selectAllMode.value = false
+  selectedItems.value = []
+}
+
 // 执行批量删除
 async function executeCleanup() {
-  if (selectedItems.value.length === 0) {
+  if (!selectAllMode.value && selectedItems.value.length === 0) {
     snackbar.error('请至少选择一个要删除的条目')
     return
   }
   showCleanDialog.value = false
   cleaning.value = true
   cleanResult.value = null
+
+  // 根据模式计算超时时间
+  const itemCount = selectAllMode.value ? totalDeleteCount.value : selectedItems.value.length
+  const timeoutMs = Math.max(600000, itemCount * 3000) // 至少10分钟，每项3秒
+
   try {
-    const { data } = await api.post('/cleanup/duplicate-media', {
-      items: selectedItems.value,
+    const body = selectAllMode.value
+      ? { delete_all: true }
+      : { items: selectedItems.value }
+    const { data } = await api.post('/cleanup/duplicate-media', body, {
+      timeout: timeoutMs,
     })
     cleanResult.value = data.data
     snackbar.success(`清理完成，删除 ${data.data.deleted_count} 个文件`)
+    selectAllMode.value = false
+    selectedItems.value = []
     page.value = 1
     await Promise.all([fetchDuplicates(), fetchAnalysisStatus()])
   } catch (e) {
-    cleanResult.value = { error: e.response?.data?.message || '清理失败' }
-    snackbar.error(e.response?.data?.message || '清理失败')
+    if (e.code === 'ECONNABORTED') {
+      cleanResult.value = { error: '请求超时，删除操作可能仍在服务端执行中，请稍后刷新页面查看结果' }
+      snackbar.error('请求超时，操作可能仍在后台执行')
+    } else {
+      cleanResult.value = { error: e.response?.data?.message || '清理失败' }
+      snackbar.error(e.response?.data?.message || '清理失败')
+    }
   } finally {
     cleaning.value = false
   }
@@ -507,7 +547,7 @@ onMounted(async () => {
                       <VChip size="small" color="warning">{{ group.count }} 个重复</VChip>
                       <VChip size="small" :color="getGroupTypeColor(group)" variant="tonal">{{ getGroupTypeLabel(group) }}</VChip>
                     </div>
-                    <span class="text-body-2 font-weight-medium panel-title-name">{{ formatGroupTitle(group) }}</span>
+                    <span class="text-body-2 font-weight-medium panel-title-name copyable" @click.stop="copyText(formatGroupTitle(group), formatGroupTitle(group))">{{ formatGroupTitle(group) }}</span>
                   </div>
                 </VExpansionPanelTitle>
                 <VExpansionPanelText>
@@ -515,7 +555,7 @@ onMounted(async () => {
                   <div v-if="smAndDown" class="mobile-items">
                     <div v-for="item in group.items" :key="item.id" class="mobile-item pa-3">
                       <div class="d-flex align-center justify-space-between mb-2">
-                        <span class="text-body-2 font-weight-medium text-truncate me-2">{{ item.name }}</span>
+                        <span class="text-body-2 font-weight-medium text-truncate me-2 copyable" @click.stop="copyText(item.name, item.name)">{{ item.name }}</span>
                         <VChip size="x-small" :color="item.type === 'Movie' ? 'primary' : 'info'" variant="tonal" class="flex-shrink-0">
                           {{ item.type === 'Movie' ? '电影' : item.type === 'Series' ? '剧集' : item.type === 'Episode' ? '单集' : item.type }}
                         </VChip>
@@ -544,7 +584,7 @@ onMounted(async () => {
                       </thead>
                       <tbody>
                         <tr v-for="item in group.items" :key="item.id">
-                          <td>{{ item.name }}</td>
+                          <td><span class="copyable" @click.stop="copyText(item.name, item.name)">{{ item.name }}</span></td>
                           <td>
                             <VChip size="x-small" :color="item.type === 'Movie' ? 'primary' : 'info'" variant="tonal">
                               {{ item.type === 'Movie' ? '电影' : item.type === 'Series' ? '剧集' : item.type === 'Episode' ? '单集' : item.type }}
@@ -611,9 +651,10 @@ onMounted(async () => {
           <template v-else-if="previewGroups.length > 0">
             <!-- 提示信息 + 全选操作栏 -->
             <div class="clean-toolbar pa-4">
-              <div class="d-flex align-center justify-space-between">
+              <div class="d-flex align-center justify-space-between flex-wrap gap-2">
                 <div class="d-flex align-center">
                   <VCheckbox
+                    v-if="!selectAllMode"
                     :model-value="selectedItems.length > 0 && allDeletableItems.every(i => selectedItems.includes(i.emby_item_id))"
                     :indeterminate="allDeletableItems.some(i => selectedItems.includes(i.emby_item_id)) && !allDeletableItems.every(i => selectedItems.includes(i.emby_item_id))"
                     label="全选当前页"
@@ -621,18 +662,43 @@ onMounted(async () => {
                     hide-details
                     @click="toggleSelectAll"
                   />
+                  <VChip v-if="selectAllMode" color="error" variant="flat" size="small" class="me-2">
+                    已选择全部
+                  </VChip>
                 </div>
-                <div class="d-flex align-center gap-3">
+                <div class="d-flex align-center gap-2 flex-wrap">
+                  <VBtn
+                    v-if="!selectAllMode && totalDeleteCount > 0"
+                    size="small"
+                    variant="tonal"
+                    color="error"
+                    @click="selectAll"
+                  >
+                    选择全部（{{ totalDeleteCount }} 项）
+                  </VBtn>
+                  <VBtn
+                    v-if="selectAllMode"
+                    size="small"
+                    variant="text"
+                    @click="cancelSelectAll"
+                  >
+                    取消全选
+                  </VBtn>
                   <VChip size="small" variant="tonal" color="default">
                     共 {{ previewGroups.length }} 组
                   </VChip>
-                  <VChip size="small" variant="tonal" :color="selectedItems.length > 0 ? 'error' : 'default'">
-                    已选 {{ selectedItems.length }} 项
+                  <VChip size="small" variant="tonal" :color="(selectAllMode ? totalDeleteCount : selectedItems.length) > 0 ? 'error' : 'default'">
+                    已选 {{ selectAllMode ? totalDeleteCount : selectedItems.length }} 项
                   </VChip>
                 </div>
               </div>
               <div class="text-caption text-medium-emphasis mt-2">
-                默认勾选体积较小的版本进行删除，你可以取消勾选或改选其他版本
+                <template v-if="selectAllMode">
+                  将删除所有重复组中体积较小的版本，共 {{ totalDeleteCount }} 项
+                </template>
+                <template v-else>
+                  默认勾选体积较小的版本进行删除，你可以取消勾选或改选其他版本
+                </template>
               </div>
             </div>
 
@@ -706,11 +772,11 @@ onMounted(async () => {
           <VBtn variant="text" @click="showCleanDialog = false">取消</VBtn>
           <VBtn
             color="error"
-            :disabled="selectedItems.length === 0"
+            :disabled="!selectAllMode && selectedItems.length === 0"
             @click="executeCleanup"
           >
             <VIcon icon="ri-delete-bin-line" class="me-1" />
-            确认删除 ({{ selectedItems.length }})
+            确认删除 ({{ selectAllMode ? totalDeleteCount : selectedItems.length }})
           </VBtn>
         </VCardActions>
       </VCard>

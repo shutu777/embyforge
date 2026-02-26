@@ -3,8 +3,10 @@ import { ref, computed, onMounted } from 'vue'
 import { useDisplay } from 'vuetify'
 import api from '@/utils/api'
 import { useSnackbar } from '@/composables/useSnackbar'
+import { useCopyToClipboard } from '@/composables/useCopyToClipboard'
 
 const snackbar = useSnackbar()
+const { copyText } = useCopyToClipboard()
 const { smAndDown } = useDisplay()
 const page = ref(1)
 const pageSize = ref(20)
@@ -134,6 +136,14 @@ function getProviderIds(item) {
   } catch { return '-' }
 }
 
+// 返回结构化的 provider ID 列表，用于 VChip 展示
+function getProviderIdList(item) {
+  try {
+    const ids = JSON.parse(item.provider_ids || '{}')
+    return Object.entries(ids).map(([k, v]) => ({ key: k, value: v }))
+  } catch { return [] }
+}
+
 onMounted(async () => { await Promise.all([fetchList(), fetchCacheStatus()]) })
 </script>
 
@@ -242,7 +252,7 @@ onMounted(async () => { await Promise.all([fetchList(), fetchCacheStatus()]) })
                 <VChip size="x-small" :color="item.type === 'Movie' ? 'success' : 'info'">
                   {{ formatType(item.type) }}
                 </VChip>
-                <span class="text-body-2 font-weight-medium text-truncate">{{ item.name }}</span>
+                <span class="text-body-2 font-weight-medium text-truncate copyable" @click.stop="copyText(item.name, item.name)">{{ item.name }}</span>
               </div>
             </div>
             <div class="text-caption text-medium-emphasis mb-1">
@@ -250,8 +260,20 @@ onMounted(async () => { await Promise.all([fetchList(), fetchCacheStatus()]) })
               <span v-if="item.file_size"> · {{ formatSize(item.file_size) }}</span>
               <span> · {{ formatTime(item.cached_at) }}</span>
             </div>
-            <div class="text-caption text-medium-emphasis mb-2" style="word-break: break-all;">
-              {{ getProviderIds(item) }}
+            <div class="d-flex flex-wrap gap-1 mb-2">
+              <template v-if="getProviderIdList(item).length">
+                <VChip
+                  v-for="pid in getProviderIdList(item)"
+                  :key="pid.key"
+                  size="x-small"
+                  variant="tonal"
+                  color="secondary"
+                  class="copyable"
+                  @click.stop="copyText(pid.value, pid.key + ': ' + pid.value)"
+                >
+                  {{ pid.key }}: {{ pid.value }}
+                </VChip>
+              </template>
             </div>
             <div class="d-flex justify-end gap-2">
               <VBtn size="x-small" variant="tonal" color="primary" @click="openEdit(item)">
@@ -277,7 +299,7 @@ onMounted(async () => { await Promise.all([fetchList(), fetchCacheStatus()]) })
               <tr>
                 <th>名称</th>
                 <th style="width: 70px;">类型</th>
-                <th>Provider IDs</th>
+                <th>外部 ID</th>
                 <th style="width: 90px;">大小</th>
                 <th style="width: 160px;">缓存时间</th>
                 <th style="width: 130px; text-align: center;">操作</th>
@@ -286,7 +308,7 @@ onMounted(async () => { await Promise.all([fetchList(), fetchCacheStatus()]) })
             <tbody>
               <tr v-for="item in items" :key="item.id">
                 <td>
-                  <span class="text-body-2">{{ item.name }}</span>
+                  <span class="text-body-2 copyable" @click.stop="copyText(item.name, item.name)">{{ item.name }}</span>
                   <span v-if="item.type === 'Series' && item.child_count" class="text-caption text-medium-emphasis ms-1">({{ item.child_count }} 季)</span>
                 </td>
                 <td>
@@ -294,8 +316,21 @@ onMounted(async () => { await Promise.all([fetchList(), fetchCacheStatus()]) })
                     {{ formatType(item.type) }}
                   </VChip>
                 </td>
-                <td class="text-caption provider-cell">
-                  {{ getProviderIds(item) }}
+                <td class="provider-cell">
+                  <template v-if="getProviderIdList(item).length">
+                    <VChip
+                      v-for="pid in getProviderIdList(item)"
+                      :key="pid.key"
+                      size="x-small"
+                      variant="tonal"
+                      color="secondary"
+                      class="me-1 mb-1 copyable"
+                      @click.stop="copyText(pid.value, pid.key + ': ' + pid.value)"
+                    >
+                      {{ pid.key }}: {{ pid.value }}
+                    </VChip>
+                  </template>
+                  <span v-else class="text-caption text-medium-emphasis">-</span>
                 </td>
                 <td class="text-caption">{{ formatSize(item.file_size) }}</td>
                 <td class="text-caption">{{ formatTime(item.cached_at) }}</td>
@@ -376,10 +411,7 @@ onMounted(async () => { await Promise.all([fetchList(), fetchCacheStatus()]) })
 // 页面特有样式（通用样式已提取到 page-common.scss）
 
 .provider-cell {
-  max-width: 200px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  max-width: 280px;
 }
 
 .action-btns {

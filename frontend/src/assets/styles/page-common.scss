@@ -153,6 +153,17 @@
   word-break: break-all;
 }
 
+// ==================== 点击复制 ====================
+// 用法: 在可复制的文本元素上添加 class="copyable"
+.copyable {
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+
+  &:hover {
+    opacity: 0.75;
+  }
+}
+
 // ==================== 面板标题 ====================
 .panel-title-content {
   display: flex;

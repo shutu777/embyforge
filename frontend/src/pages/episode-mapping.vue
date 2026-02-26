@@ -1,16 +1,18 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import api from '@/utils/api'
 import { useSnackbar } from '@/composables/useSnackbar'
 import { useEmbyUrl } from '@/composables/useEmbyUrl'
+import { useCopyToClipboard } from '@/composables/useCopyToClipboard'
 
 const route = useRoute()
 const router = useRouter()
 const snackbar = useSnackbar()
 const { smAndDown } = useDisplay()
 const { detectEmbyUrl, embyWebUrl } = useEmbyUrl()
+const { copyText } = useCopyToClipboard()
 
 // 从 URL query 初始化状态
 const page = ref(Number(route.query.page) || 1)
@@ -39,6 +41,14 @@ const cacheFreshness = ref(null)
 
 const tmdbNotConfigured = ref(false)
 
+// 展开面板状态
+const activePanel = ref([])
+
+// 删除相关状态
+const deleteDialog = ref(false)
+const deleteTarget = ref(null) // { embyItemId, name, seasonNumber? }
+const deleting = ref(false)
+
 // Emby 配置（由 useEmbyUrl 全局管理）
 
 const hasCache = computed(() => cacheStatus.value && cacheStatus.value.total_items > 0)
@@ -58,14 +68,17 @@ const sortOptions = [
   { title: '名称 (Z→A)', value: 'name_desc' },
 ]
 
-// 同步状态到 URL query
+// 同步状态到 URL query（带标志位防止循环触发）
+let isInternalNavigation = false
 function syncQueryToUrl() {
+  isInternalNavigation = true
   const query = {}
   if (page.value > 1) query.page = String(page.value)
   if (searchText.value) query.search = searchText.value
   if (sortBy.value && sortBy.value !== 'season_count_desc') query.sort = sortBy.value
   if (filterType.value) query.filter = filterType.value
   router.replace({ query })
+  nextTick(() => { isInternalNavigation = false })
 }
 
 function openInEmby(embyItemId) {
@@ -159,6 +172,7 @@ async function startAnalyze() {
 
 function onPageChange(newPage) {
   page.value = newPage
+  activePanel.value = []
   syncQueryToUrl()
   fetchAnomalies()
 }
@@ -166,6 +180,7 @@ function onPageChange(newPage) {
 function doSearch() {
   searchText.value = searchInput.value.trim()
   page.value = 1
+  activePanel.value = []
   syncQueryToUrl()
   fetchAnomalies()
 }
@@ -174,6 +189,7 @@ function clearSearch() {
   searchInput.value = ''
   searchText.value = ''
   page.value = 1
+  activePanel.value = []
   syncQueryToUrl()
   fetchAnomalies()
 }
@@ -181,6 +197,7 @@ function clearSearch() {
 function setFilter(val) {
   filterType.value = val
   page.value = 1
+  activePanel.value = []
   syncQueryToUrl()
   fetchAnomalies()
 }
@@ -188,9 +205,82 @@ function setFilter(val) {
 // 排序变化时重新加载
 watch(sortBy, () => {
   page.value = 1
+  activePanel.value = []
   syncQueryToUrl()
   fetchAnomalies()
 })
+
+// 浏览器前进/后退时从 URL 恢复状态
+watch(() => route.query, () => {
+  if (isInternalNavigation) return
+  const newPage = Number(route.query.page) || 1
+  const newSearch = route.query.search || ''
+  const newSort = route.query.sort || 'season_count_desc'
+  const newFilter = route.query.filter || ''
+
+  const changed = newPage !== page.value
+    || newSearch !== searchText.value
+    || newSort !== sortBy.value
+    || newFilter !== filterType.value
+
+  if (!changed) return
+
+  page.value = newPage
+  searchText.value = newSearch
+  searchInput.value = newSearch
+  sortBy.value = newSort
+  filterType.value = newFilter
+  activePanel.value = []
+  fetchAnomalies()
+}, { deep: true })
+
+// 删除整组
+function onDeleteGroup(group) {
+  deleteTarget.value = { embyItemId: group.emby_item_id, name: group.name }
+  deleteDialog.value = true
+}
+
+// 删除单季
+function onDeleteSeason(group, season) {
+  deleteTarget.value = {
+    embyItemId: group.emby_item_id,
+    name: group.name,
+    seasonNumber: season.season_number,
+  }
+  deleteDialog.value = true
+}
+
+// 确认删除
+async function confirmDelete() {
+  deleting.value = true
+  try {
+    const params = { emby_item_id: deleteTarget.value.embyItemId }
+    if (deleteTarget.value.seasonNumber !== undefined) {
+      params.season_number = deleteTarget.value.seasonNumber
+    }
+    await api.delete('/scan/episode-mapping', { data: params, timeout: 600000 })
+    snackbar.success('删除成功')
+    deleteDialog.value = false
+    await Promise.all([fetchAnomalies(), fetchAnalysisStatus()])
+  } catch (e) {
+    if (e.code === 'ECONNABORTED') {
+      snackbar.error('请求超时，操作可能仍在后台执行')
+    } else {
+      snackbar.error('删除失败: ' + (e.response?.data?.message || e.message))
+    }
+  } finally {
+    deleting.value = false
+  }
+}
+
+// 获取删除确认文本
+function getDeleteConfirmText() {
+  if (!deleteTarget.value) return ''
+  if (deleteTarget.value.seasonNumber !== undefined) {
+    return `确定要删除「${deleteTarget.value.name}」的 Season ${deleteTarget.value.seasonNumber} 异常记录吗？`
+  }
+  return `确定要删除「${deleteTarget.value.name}」的所有异常映射记录吗？`
+}
 
 onMounted(async () => {
   await fetchCacheStatus()
@@ -394,15 +484,27 @@ onMounted(async () => {
           </VRow>
 
           <div v-if="groups.length > 0">
-            <VExpansionPanels variant="accordion">
+            <VExpansionPanels v-model="activePanel" variant="accordion">
               <VExpansionPanel v-for="group in groups" :key="group.emby_item_id">
                 <VExpansionPanelTitle>
                   <div class="panel-title-content">
                     <div class="d-flex align-center gap-2">
                       <VChip size="small" color="warning">{{ group.season_count }} 季异常</VChip>
-                      <VChip size="small" color="info" variant="tonal">TMDB {{ group.tmdb_id }}</VChip>
+                      <VChip size="small" color="info" variant="tonal" class="copyable" @click.stop="copyText(String(group.tmdb_id), 'TMDB ' + group.tmdb_id)">TMDB {{ group.tmdb_id }}</VChip>
                     </div>
-                    <span class="text-body-2 font-weight-medium panel-title-name">{{ group.name }}</span>
+                    <div class="d-flex align-center gap-2">
+                      <span class="text-body-2 font-weight-medium panel-title-name copyable" @click.stop="copyText(group.name, group.name)">{{ group.name }}</span>
+                      <VBtn
+                        icon
+                        size="x-small"
+                        variant="text"
+                        color="error"
+                        @click.stop="onDeleteGroup(group)"
+                      >
+                        <VIcon icon="ri-delete-bin-line" size="16" />
+                        <VTooltip activator="parent" location="top">删除整组</VTooltip>
+                      </VBtn>
+                    </div>
                   </div>
                 </VExpansionPanelTitle>
                 <VExpansionPanelText>
@@ -421,12 +523,17 @@ onMounted(async () => {
                     <div v-for="season in group.seasons" :key="season.id" class="mobile-item pa-2">
                       <div class="d-flex align-center justify-space-between">
                         <span class="text-body-2 font-weight-medium">Season {{ season.season_number }}</span>
-                        <VChip
-                          size="x-small"
-                          :color="season.local_episodes > season.tmdb_episodes ? 'error' : 'warning'"
-                        >
-                          {{ season.local_episodes > season.tmdb_episodes ? '+' : '' }}{{ season.local_episodes - season.tmdb_episodes }}
-                        </VChip>
+                        <div class="d-flex align-center gap-1">
+                          <VChip
+                            size="x-small"
+                            :color="season.local_episodes > season.tmdb_episodes ? 'error' : 'warning'"
+                          >
+                            {{ season.local_episodes > season.tmdb_episodes ? '+' : '' }}{{ season.local_episodes - season.tmdb_episodes }}
+                          </VChip>
+                          <VBtn icon size="x-small" variant="text" color="error" @click.stop="onDeleteSeason(group, season)">
+                            <VIcon icon="ri-delete-bin-line" size="14" />
+                          </VBtn>
+                        </div>
                       </div>
                       <div class="d-flex align-center justify-space-between text-caption text-medium-emphasis">
                         <span>本地 {{ season.local_episodes }} 集</span>
@@ -442,6 +549,7 @@ onMounted(async () => {
                         <th>本地集数</th>
                         <th>TMDB 集数</th>
                         <th>差异</th>
+                        <th style="width: 60px;">操作</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -456,6 +564,12 @@ onMounted(async () => {
                           >
                             {{ season.local_episodes > season.tmdb_episodes ? '+' : '' }}{{ season.local_episodes - season.tmdb_episodes }}
                           </VChip>
+                        </td>
+                        <td>
+                          <VBtn icon size="x-small" variant="text" color="error" @click.stop="onDeleteSeason(group, season)">
+                            <VIcon icon="ri-delete-bin-line" size="16" />
+                            <VTooltip activator="parent" location="top">删除此季</VTooltip>
+                          </VBtn>
                         </td>
                       </tr>
                     </tbody>
@@ -479,6 +593,22 @@ onMounted(async () => {
         </VCardText>
       </VCard>
     </template>
+
+    <!-- 删除确认对话框 -->
+    <VDialog v-model="deleteDialog" max-width="400">
+      <VCard data-no-hover>
+        <VCardTitle class="text-body-1 font-weight-semibold pa-4">确认删除</VCardTitle>
+        <VCardText class="pa-4 pt-0">
+          <div class="text-body-2">{{ getDeleteConfirmText() }}</div>
+          <div class="text-caption text-medium-emphasis mt-2">此操作仅删除异常映射记录，不会影响 Emby 中的实际媒体文件。</div>
+        </VCardText>
+        <VCardActions class="pa-4 pt-0">
+          <VSpacer />
+          <VBtn variant="text" @click="deleteDialog = false">取消</VBtn>
+          <VBtn color="error" :loading="deleting" @click="confirmDelete">确认删除</VBtn>
+        </VCardActions>
+      </VCard>
+    </VDialog>
   </div>
 </template>
 

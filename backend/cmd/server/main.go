@@ -301,6 +301,7 @@ func main() {
 		protected.GET("/scan/scrape-anomaly", scanHandler.GetScrapeAnomalies)
 		protected.GET("/scan/duplicate-media", scanHandler.GetDuplicateMedia)
 		protected.GET("/scan/episode-mapping", scanHandler.GetEpisodeMappingAnomalies)
+		protected.DELETE("/scan/episode-mapping", scanHandler.DeleteEpisodeMappingAnomaly)
 		protected.GET("/scan/analysis-status", scanHandler.GetAnalysisStatus)
 
 		protected.GET("/tmdb-cache", tmdbCacheHandler.GetTmdbCacheList)
