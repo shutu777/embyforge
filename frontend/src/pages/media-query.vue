@@ -39,6 +39,12 @@ const selectedTmdbResult = ref(null)
 const transferSeason = ref(null)
 const transferring = ref(false)
 
+function getHdhiveUrl(item) {
+  if (!item?.TmdbId) return ''
+  const type = item.Type === 'Movie' ? 'movie' : 'tv'
+  return `https://hdhive.com/tmdb/${type}/${item.TmdbId}`
+}
+
 async function doSearch() {
   const keyword = searchInput.value.trim()
   if (!keyword) return
@@ -274,17 +280,21 @@ onMounted(() => {
 
         <VRow dense>
           <VCol cols="12" sm="8">
-            <VTextField
-              v-model="searchInput"
-              placeholder="输入名称或 TMDB ID 搜索..."
-              density="compact"
-              variant="outlined"
-              hide-details
-              prepend-inner-icon="ri-search-line"
-              clearable
-              @keyup.enter="doSearch"
-              @click:clear="searchResults = []; searched = false"
-            />
+            <form @submit.capture.stop.prevent="doSearch">
+              <VTextField
+                v-model="searchInput"
+                placeholder="输入名称或 TMDB ID 搜索..."
+                density="compact"
+                variant="outlined"
+                hide-details
+                prepend-inner-icon="ri-search-line"
+                clearable
+                enterkeyhint="search"
+                @keydown.enter.capture.stop.prevent="doSearch"
+                @keyup.enter.capture.stop.prevent="doSearch"
+                @click:clear="searchResults = []; searched = false"
+              />
+            </form>
           </VCol>
           <VCol cols="12" sm="2">
             <VBtn color="primary" block :loading="searching" @click="doSearch">
@@ -369,6 +379,7 @@ onMounted(() => {
                     v-if="embyWebUrl(item.Id)"
                     :href="embyWebUrl(item.Id)"
                     target="_blank"
+                    rel="noopener noreferrer"
                     variant="text"
                     color="primary"
                     size="small"
@@ -381,6 +392,7 @@ onMounted(() => {
                     v-if="item.TmdbId"
                     :href="'https://www.themoviedb.org/' + (item.Type === 'Movie' ? 'movie' : 'tv') + '/' + item.TmdbId"
                     target="_blank"
+                    rel="noopener noreferrer"
                     variant="text"
                     color="success"
                     size="small"
@@ -388,6 +400,19 @@ onMounted(() => {
                   >
                     <VIcon icon="ri-movie-2-line" size="16" class="me-1" />
                     TMDB
+                  </VBtn>
+                  <VBtn
+                    v-if="item.TmdbId"
+                    :href="getHdhiveUrl(item)"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    variant="text"
+                    color="secondary"
+                    size="small"
+                    @click.stop
+                  >
+                    <VIcon icon="ri-external-link-line" size="16" class="me-1" />
+                    HDHive
                   </VBtn>
                   <VBtn
                     variant="text"
@@ -453,59 +478,86 @@ onMounted(() => {
               <div v-if="item.Path" class="px-3 pb-2">
                 <div class="mobile-path-box pa-2 rounded text-caption">
                   <VIcon icon="ri-folder-line" size="12" class="me-1 text-medium-emphasis flex-shrink-0" />
-                  <span>{{ item.Path }}</span>
+                  <span class="mobile-path-text">{{ item.Path }}</span>
                 </div>
               </div>
 
               <!-- 操作按钮（独占一行，均分） -->
               <VDivider />
-              <div class="d-flex">
-                <VBtn
-                  v-if="embyWebUrl(item.Id)"
-                  :href="embyWebUrl(item.Id)"
-                  target="_blank"
-                  variant="text"
-                  color="primary"
-                  size="small"
-                  class="flex-grow-1"
-                  @click.stop
-                >
-                  <VIcon icon="ri-external-link-line" size="14" class="me-1" />
-                  Emby
-                </VBtn>
-                <VBtn
-                  v-if="item.TmdbId"
-                  :href="'https://www.themoviedb.org/' + (item.Type === 'Movie' ? 'movie' : 'tv') + '/' + item.TmdbId"
-                  target="_blank"
-                  variant="text"
-                  color="success"
-                  size="small"
-                  class="flex-grow-1"
-                  @click.stop
-                >
-                  <VIcon icon="ri-movie-2-line" size="14" class="me-1" />
-                  TMDB
-                </VBtn>
-                <VBtn
-                  variant="text"
-                  color="warning"
-                  size="small"
-                  class="flex-grow-1"
-                  @click.stop="onTransferClick(item)"
-                >
-                  <VIcon icon="ri-archive-line" size="14" class="me-1" />
-                  归档
-                </VBtn>
-                <VBtn
-                  variant="text"
-                  color="error"
-                  size="small"
-                  class="flex-grow-1"
-                  @click.stop="onDeleteClick(item)"
-                >
-                  <VIcon icon="ri-delete-bin-line" size="14" class="me-1" />
-                  删除
-                </VBtn>
+              <div class="mobile-action-grid">
+                <div class="mobile-action-row mobile-action-row-links">
+                  <VBtn
+                    v-if="embyWebUrl(item.Id)"
+                    :href="embyWebUrl(item.Id)"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    variant="text"
+                    color="primary"
+                    size="small"
+                    density="compact"
+                    block
+                    @click.stop
+                  >
+                    <VIcon icon="ri-external-link-line" size="14" class="me-1" />
+                    Emby
+                  </VBtn>
+                  <VBtn
+                    v-if="item.TmdbId"
+                    :href="'https://www.themoviedb.org/' + (item.Type === 'Movie' ? 'movie' : 'tv') + '/' + item.TmdbId"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    variant="text"
+                    color="success"
+                    size="small"
+                    density="compact"
+                    block
+                    @click.stop
+                  >
+                    <VIcon icon="ri-movie-2-line" size="14" class="me-1" />
+                    TMDB
+                  </VBtn>
+                  <VBtn
+                    v-if="item.TmdbId"
+                    :href="getHdhiveUrl(item)"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    variant="text"
+                    color="secondary"
+                    size="small"
+                    density="compact"
+                    block
+                    @click.stop
+                  >
+                    <VIcon icon="ri-external-link-line" size="14" class="me-1" />
+                    HDHive
+                  </VBtn>
+                </div>
+
+                <div class="mobile-action-row mobile-action-row-actions">
+                  <VBtn
+                    variant="text"
+                    color="warning"
+                    size="small"
+                    density="compact"
+                    block
+                    @click.stop="onTransferClick(item)"
+                  >
+                    <VIcon icon="ri-archive-line" size="14" class="me-1" />
+                    归档
+                  </VBtn>
+                  <VBtn
+                    variant="text"
+                    color="error"
+                    size="small"
+                    density="compact"
+                    block
+                    @click.stop="onDeleteClick(item)"
+                  >
+                    <VIcon icon="ri-delete-bin-line" size="14" class="me-1" />
+                    删除
+                  </VBtn>
+                  <div class="mobile-action-spacer" />
+                </div>
               </div>
             </div>
           </VCard>
@@ -800,6 +852,38 @@ onMounted(() => {
   line-height: 1.4;
   display: flex;
   align-items: center;
+}
+
+.mobile-path-text {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.mobile-action-grid {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mobile-action-row {
+  display: grid;
+  gap: 6px;
+}
+
+.mobile-action-row-links {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.mobile-action-row-actions {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.mobile-action-spacer {
+  width: 100%;
 }
 
 @media (max-width: 599.98px) {

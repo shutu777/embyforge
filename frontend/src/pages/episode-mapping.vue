@@ -49,6 +49,8 @@ const deleteDialog = ref(false)
 const deleteTarget = ref(null) // { embyItemId, name, seasonNumber? }
 const deleting = ref(false)
 
+const searchFieldRef = ref(null)
+
 // Emby 配置（由 useEmbyUrl 全局管理）
 
 const hasCache = computed(() => cacheStatus.value && cacheStatus.value.total_items > 0)
@@ -92,6 +94,10 @@ function openInEmby(embyItemId) {
 
 function openInTmdb(tmdbId) {
   window.open(`https://www.themoviedb.org/tv/${tmdbId}`, '_blank')
+}
+
+function openInHdhive(tmdbId) {
+  window.open(`https://hdhive.com/tmdb/tv/${tmdbId}`, '_blank', 'noopener,noreferrer')
 }
 
 // Emby 地址探测（由 useEmbyUrl 全局管理）
@@ -183,6 +189,17 @@ function doSearch() {
   activePanel.value = []
   syncQueryToUrl()
   fetchAnomalies()
+}
+
+function onSearchEnter(e) {
+  e?.preventDefault?.()
+  e?.stopPropagation?.()
+  doSearch()
+
+  nextTick(() => {
+    const input = searchFieldRef.value?.$el?.querySelector?.('input')
+    if (input?.blur) input.blur()
+  })
 }
 
 function clearSearch() {
@@ -427,9 +444,11 @@ onMounted(async () => {
           </div>
 
           <!-- 搜索、排序、筛选工具栏 -->
-          <VRow class="mb-4" dense>
+          <form @submit.capture.stop.prevent="doSearch" @keydown.enter.capture.stop.prevent="onSearchEnter">
+            <VRow class="mb-4" dense>
             <VCol cols="12" sm="4">
               <VTextField
+                ref="searchFieldRef"
                 v-model="searchInput"
                 placeholder="搜索节目名称..."
                 density="compact"
@@ -437,7 +456,9 @@ onMounted(async () => {
                 hide-details
                 prepend-inner-icon="ri-search-line"
                 clearable
-                @keyup.enter="doSearch"
+                enterkeyhint="search"
+                @keydown.enter.capture.stop.prevent="onSearchEnter"
+                @keyup.enter.capture.stop.prevent="onSearchEnter"
                 @click:clear="clearSearch"
               />
             </VCol>
@@ -445,6 +466,7 @@ onMounted(async () => {
               <VSelect
                 v-model="sortBy"
                 :items="sortOptions"
+                :tabindex="smAndDown ? -1 : null"
                 item-title="title"
                 item-value="value"
                 density="compact"
@@ -481,7 +503,8 @@ onMounted(async () => {
                 </VBtn>
               </div>
             </VCol>
-          </VRow>
+            </VRow>
+          </form>
 
           <div v-if="groups.length > 0">
             <VExpansionPanels v-model="activePanel" variant="accordion">
@@ -512,6 +535,10 @@ onMounted(async () => {
                     <VBtn size="small" variant="text" color="info" @click.stop="openInTmdb(group.tmdb_id)">
                       <VIcon icon="ri-movie-2-line" size="14" class="me-1" />
                       在 TMDB 中查看
+                    </VBtn>
+                    <VBtn size="small" variant="text" color="secondary" @click.stop="openInHdhive(group.tmdb_id)">
+                      <VIcon icon="ri-external-link-line" size="14" class="me-1" />
+                      在 HDHive 中查看
                     </VBtn>
                     <VBtn size="small" variant="text" color="primary" @click.stop="openInEmby(group.emby_item_id)">
                       <VIcon icon="ri-external-link-line" size="14" class="me-1" />
