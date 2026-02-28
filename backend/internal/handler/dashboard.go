@@ -36,11 +36,11 @@ type RecentMedia struct {
 
 // PlaybackRecord 播放记录
 type PlaybackRecord struct {
-	User     string `json:"user"`
-	Device   string `json:"device"`
-	Media    string `json:"media"`
-	Time     string `json:"time"`
-	ItemID   string `json:"item_id"`
+	User   string `json:"user"`
+	Device string `json:"device"`
+	Media  string `json:"media"`
+	Time   string `json:"time"`
+	ItemID string `json:"item_id"`
 }
 
 // DashboardData 仪表盘数据
@@ -201,9 +201,10 @@ func (h *DashboardHandler) fetchRecentItems(baseURL, apiKey string) []RecentMedi
 	for _, item := range resp.Items {
 		_, hasImage := item.ImageTags["Primary"]
 		typeName := item.Type
-		if typeName == "Movie" {
+		switch typeName {
+		case "Movie":
 			typeName = "电影"
-		} else if typeName == "Series" {
+		case "Series":
 			typeName = "剧集"
 		}
 		items = append(items, RecentMedia{

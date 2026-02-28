@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useDisplay } from 'vuetify'
+import { useClipboard } from '@vueuse/core'
 import api from '@/utils/api'
 import { useSnackbar } from '@/composables/useSnackbar'
 import { useEmbyUrl } from '@/composables/useEmbyUrl'
@@ -28,16 +29,12 @@ const deleteTarget = ref(null)
 const deleteScope = ref('')
 const deleting = ref(false)
 
-// 归档对话框
-const transferDialog = ref(false)
-const transferItem = ref(null)
-const transferMediaType = ref('movie')
-const tmdbSearchInput = ref('')
-const tmdbSearchResults = ref([])
-const tmdbSearching = ref(false)
-const selectedTmdbResult = ref(null)
-const transferSeason = ref(null)
-const transferring = ref(false)
+// 路径替换配置
+const pathReplaceConfig = ref({ clouddrive_path: '', emby_strm_path: '' })
+const { copy: clipboardCopy } = useClipboard({ legacy: true })
+
+// Symedia 检查加载状态（按 item ID 追踪）
+const symediaLoadingIds = ref(new Set())
 
 function getHdhiveUrl(item) {
   if (!item?.TmdbId) return ''
@@ -155,103 +152,102 @@ function getChildCount(item) {
   return item.ChildCount || item.RecursiveItemCount || 0
 }
 
-// 归档相关方法
-function getTransferPath(item) {
-  // 提取源文件夹路径：Symedia 需要的是文件夹的完整路径
-  // 电影: /CloudNAS/CloudDrive/115open/影库/电影/外语电影/乱世佳人 (1939) {tmdb-770}/乱世佳人.mkv → /CloudNAS/CloudDrive/115open/影库/电影/外语电影/乱世佳人 (1939) {tmdb-770}
-  // 剧集: Series 的 Path 通常已经是根目录
+// 路径替换：将 Emby Strm 路径前缀替换为 CloudDrive 路径前缀
+function getReplacedPath(itemPath) {
+  if (!itemPath) return ''
+  const embyStrm = pathReplaceConfig.value.emby_strm_path?.replace(/\/+$/, '')
+  const cloudDrive = pathReplaceConfig.value.clouddrive_path?.replace(/\/+$/, '')
+  if (embyStrm && cloudDrive && (itemPath === embyStrm || itemPath.startsWith(embyStrm + '/'))) {
+    return cloudDrive + itemPath.slice(embyStrm.length)
+  }
+  return itemPath
+}
+
+// 判断路径替换是否生效
+function isPathReplaceActive() {
+  return !!(pathReplaceConfig.value.emby_strm_path?.trim() && pathReplaceConfig.value.clouddrive_path?.trim())
+}
+
+// 获取显示路径（如果路径替换生效则显示替换后的路径，否则显示原始路径）
+function getDisplayPath(item) {
   if (!item?.Path) return ''
-  const path = item.Path
-  // 如果路径最后一段包含文件扩展名（有点号），截取到父目录
-  const lastSlash = path.lastIndexOf('/')
-  const lastBackslash = path.lastIndexOf('\\')
+  return isPathReplaceActive() ? getReplacedPath(item.Path) : item.Path
+}
+
+// 复制路径到剪贴板
+async function copyPath(item) {
+  const path = getDisplayPath(item)
+  if (!path) return
+  try {
+    await clipboardCopy(path)
+    snackbar.success('路径已复制到剪贴板')
+  } catch {
+    snackbar.error('复制失败')
+  }
+}
+
+// 提取文件夹路径（去掉文件名部分）
+function getFolderPath(itemPath) {
+  if (!itemPath) return ''
+  const lastSlash = itemPath.lastIndexOf('/')
+  const lastBackslash = itemPath.lastIndexOf('\\')
   const lastSep = Math.max(lastSlash, lastBackslash)
   if (lastSep > 0) {
-    const lastPart = path.substring(lastSep + 1)
+    const lastPart = itemPath.substring(lastSep + 1)
     if (lastPart.includes('.')) {
-      return path.substring(0, lastSep)
+      return itemPath.substring(0, lastSep)
     }
   }
-  return path
+  return itemPath
 }
 
-function getTransferName(item) {
-  // 提取源文件夹名：Symedia 需要的是文件夹名（路径最后一段），不是 Emby 的媒体标题
-  // 例如: /CloudNAS/.../乱世佳人 (1939) {tmdb-770} → 乱世佳人 (1939) {tmdb-770}
-  const dirPath = getTransferPath(item)
-  if (!dirPath) return item?.Name || ''
-  const lastSlash = dirPath.lastIndexOf('/')
-  const lastBackslash = dirPath.lastIndexOf('\\')
-  const lastSep = Math.max(lastSlash, lastBackslash)
-  if (lastSep >= 0) {
-    return dirPath.substring(lastSep + 1)
+// 点击 Symedia 按钮：检查路径是否存在，若存在则打开 Symedia 文件管理器
+async function onSymediaClick(item) {
+  if (!item?.Path) {
+    snackbar.error('该条目没有路径信息')
+    return
   }
-  return dirPath
-}
-
-function onTransferClick(item) {
-  transferItem.value = item
-  transferMediaType.value = item.Type === 'Movie' ? 'movie' : 'tv'
-  tmdbSearchInput.value = item.Name || ''
-  tmdbSearchResults.value = []
-  selectedTmdbResult.value = null
-  transferSeason.value = null
-  transferring.value = false
-  transferDialog.value = true
-}
-
-async function doTmdbSearch() {
-  const query = tmdbSearchInput.value.trim()
-  if (!query) return
-  tmdbSearching.value = true
-  selectedTmdbResult.value = null
+  const folderPath = getFolderPath(item.Path)
+  const replacedPath = getReplacedPath(folderPath)
+  const itemId = item.Id
+  symediaLoadingIds.value.add(itemId)
+  symediaLoadingIds.value = new Set(symediaLoadingIds.value)
   try {
-    const { data } = await api.get('/tmdb/search', {
-      params: { query, media_type: transferMediaType.value },
-    })
-    tmdbSearchResults.value = data.data || []
-  } catch (e) {
-    snackbar.error('TMDB 搜索失败: ' + (e.response?.data?.error || e.message))
-    tmdbSearchResults.value = []
-  } finally {
-    tmdbSearching.value = false
-  }
-}
-
-function selectTmdbResult(result) {
-  selectedTmdbResult.value = result
-}
-
-function getTmdbPosterUrl(posterPath) {
-  if (!posterPath) return ''
-  return 'https://image.tmdb.org/t/p/w185' + posterPath
-}
-
-async function confirmTransfer() {
-  if (!selectedTmdbResult.value || !transferItem.value) return
-  transferring.value = true
-  try {
-    const body = {
-      name: getTransferName(transferItem.value),
-      path: getTransferPath(transferItem.value),
-      tmdbid: selectedTmdbResult.value.id,
-      media_type: transferMediaType.value,
-      season: transferMediaType.value === 'tv' && transferSeason.value != null
-        ? Number(transferSeason.value)
-        : null,
+    const { data } = await api.post('/symedia/check-path', { path: replacedPath })
+    if (data.exists) {
+      const symediaUrl = (data.symedia_url || '').replace(/\/+$/, '')
+      if (symediaUrl) {
+        // 复制路径到剪贴板，方便在 Symedia 文件管理器中粘贴导航
+        try { await clipboardCopy(replacedPath) } catch {}
+        snackbar.success('路径已复制，请在 Symedia 文件管理器搜索栏中粘贴')
+        window.open(symediaUrl + '/#/file_manager', '_blank')
+      }
+    } else {
+      snackbar.error('Symedia 中未找到该路径的文件')
     }
-    const { data } = await api.post('/symedia/transfer', body)
-    snackbar.success(data.message || '归档请求已提交')
-    transferDialog.value = false
   } catch (e) {
-    snackbar.error('归档失败: ' + (e.response?.data?.error || e.message))
+    snackbar.error('Symedia 检查失败: ' + (e.response?.data?.error || e.message))
   } finally {
-    transferring.value = false
+    symediaLoadingIds.value.delete(itemId)
+    symediaLoadingIds.value = new Set(symediaLoadingIds.value)
+  }
+}
+
+// 加载路径替换配置
+async function fetchPathReplaceConfig() {
+  try {
+    const { data } = await api.get('/symedia/config')
+    if (data.data?.path_replace) {
+      pathReplaceConfig.value = data.data.path_replace
+    }
+  } catch {
+    // 忽略，首次可能未配置
   }
 }
 
 onMounted(() => {
   detectEmbyUrl()
+  fetchPathReplaceConfig()
 })
 </script>
 
@@ -261,7 +257,7 @@ onMounted(() => {
     <div class="mb-6">
       <h1 class="text-h4 font-weight-bold mb-2">媒体库查询</h1>
       <p class="text-body-1 text-medium-emphasis">
-        搜索 Emby 媒体库中的电影或剧集，快速定位并删除或归档指定条目
+        搜索 Emby 媒体库中的电影或剧集，快速定位并管理指定条目
       </p>
     </div>
 
@@ -274,7 +270,7 @@ onMounted(() => {
           </VAvatar>
           <div>
             <div class="text-body-1 font-weight-semibold">媒体库查询</div>
-            <div class="text-body-2 text-medium-emphasis">搜索 Emby 媒体库，删除或归档电影和剧集</div>
+            <div class="text-body-2 text-medium-emphasis">搜索 Emby 媒体库，管理电影和剧集</div>
           </div>
         </div>
 
@@ -365,9 +361,10 @@ onMounted(() => {
                     </VChip>
                   </div>
                   <div v-if="item.Path" class="mt-2">
-                    <VChip size="x-small" variant="tonal" color="secondary" label class="path-chip">
+                    <VChip size="x-small" variant="tonal" color="secondary" label class="path-chip path-chip-clickable" @click.stop="copyPath(item)">
                       <VIcon icon="ri-folder-line" size="12" class="me-1" />
-                      {{ item.Path }}
+                      {{ getDisplayPath(item) }}
+                      <VIcon icon="ri-file-copy-line" size="12" class="ms-1" />
                     </VChip>
                   </div>
                 </VCardText>
@@ -418,10 +415,11 @@ onMounted(() => {
                     variant="text"
                     color="warning"
                     size="small"
-                    @click.stop="onTransferClick(item)"
+                    :loading="symediaLoadingIds.has(item.Id)"
+                    @click.stop="onSymediaClick(item)"
                   >
-                    <VIcon icon="ri-archive-line" size="16" class="me-1" />
-                    归档
+                    <VIcon icon="ri-folder-open-line" size="16" class="me-1" />
+                    Symedia
                   </VBtn>
                   <VBtn
                     variant="text"
@@ -474,11 +472,12 @@ onMounted(() => {
                 </div>
               </div>
 
-              <!-- 路径（独占一行，完整显示） -->
+              <!-- 路径（独占一行，完整显示，点击复制） -->
               <div v-if="item.Path" class="px-3 pb-2">
-                <div class="mobile-path-box pa-2 rounded text-caption">
+                <div class="mobile-path-box mobile-path-box-clickable pa-2 rounded text-caption" @click.stop="copyPath(item)">
                   <VIcon icon="ri-folder-line" size="12" class="me-1 text-medium-emphasis flex-shrink-0" />
-                  <span class="mobile-path-text">{{ item.Path }}</span>
+                  <span class="mobile-path-text">{{ getDisplayPath(item) }}</span>
+                  <VIcon icon="ri-file-copy-line" size="12" class="ms-1 text-medium-emphasis flex-shrink-0" />
                 </div>
               </div>
 
@@ -540,10 +539,11 @@ onMounted(() => {
                     size="small"
                     density="compact"
                     block
-                    @click.stop="onTransferClick(item)"
+                    :loading="symediaLoadingIds.has(item.Id)"
+                    @click.stop="onSymediaClick(item)"
                   >
-                    <VIcon icon="ri-archive-line" size="14" class="me-1" />
-                    归档
+                    <VIcon icon="ri-folder-open-line" size="14" class="me-1" />
+                    Symedia
                   </VBtn>
                   <VBtn
                     variant="text"
@@ -628,155 +628,6 @@ onMounted(() => {
       </VCard>
     </VDialog>
 
-    <!-- 归档对话框 (Transfer_Dialog) -->
-    <VDialog v-model="transferDialog" :max-width="smAndDown ? '100%' : 650" :fullscreen="smAndDown" scrollable>
-      <VCard data-no-hover>
-        <VCardTitle class="pa-4 d-flex align-center transfer-dialog-title">
-          <VIcon icon="ri-archive-line" size="20" class="me-2" color="warning" />
-          <span class="text-body-1 font-weight-semibold text-truncate">归档 - {{ transferItem?.Name }}</span>
-          <VSpacer />
-          <VBtn icon variant="text" size="small" @click="transferDialog = false">
-            <VIcon icon="ri-close-line" />
-          </VBtn>
-        </VCardTitle>
-
-        <VDivider />
-
-        <VCardText class="pa-4" :class="{ 'px-3': smAndDown }">
-          <!-- 源文件路径 -->
-          <div v-if="transferItem?.Path" class="mb-4">
-            <div class="text-caption text-medium-emphasis mb-1">源文件路径</div>
-            <div class="transfer-path-box pa-2 rounded">
-              <VIcon icon="ri-folder-line" size="14" class="me-1 text-medium-emphasis" />
-              <span class="text-caption">{{ getTransferPath(transferItem) }}</span>
-            </div>
-          </div>
-
-          <!-- 媒体类型 + 季号 -->
-          <div class="d-flex align-center ga-3 mb-4 flex-wrap">
-            <VChip
-              :color="transferMediaType === 'movie' ? 'primary' : 'default'"
-              :variant="transferMediaType === 'movie' ? 'flat' : 'outlined'"
-              label
-              size="large"
-              @click="transferMediaType = 'movie'"
-            >
-              <VIcon icon="ri-film-fill" size="18" class="me-1" />
-              电影
-            </VChip>
-            <VChip
-              :color="transferMediaType === 'tv' ? 'primary' : 'default'"
-              :variant="transferMediaType === 'tv' ? 'flat' : 'outlined'"
-              label
-              size="large"
-              @click="transferMediaType = 'tv'"
-            >
-              <VIcon icon="ri-tv-2-fill" size="18" class="me-1" />
-              剧集
-            </VChip>
-            <VTextField
-              v-if="transferMediaType === 'tv'"
-              v-model.number="transferSeason"
-              type="number"
-              density="compact"
-              variant="outlined"
-              hide-details
-              placeholder="季号（可选）"
-              style="max-width: 130px; flex-shrink: 0;"
-            />
-          </div>
-
-          <!-- TMDB 搜索栏 -->
-          <div class="d-flex align-center ga-2 mb-4">
-            <VTextField
-              v-model="tmdbSearchInput"
-              placeholder="输入名称搜索 TMDB..."
-              density="compact"
-              variant="outlined"
-              hide-details
-              prepend-inner-icon="ri-search-line"
-              clearable
-              class="flex-grow-1"
-              @keyup.enter="doTmdbSearch"
-            />
-            <VBtn color="primary" :loading="tmdbSearching" density="compact" height="40" @click="doTmdbSearch" style="min-width: 72px;">
-              搜索
-            </VBtn>
-          </div>
-
-          <!-- TMDB 搜索结果列表 -->
-          <VProgressLinear v-if="tmdbSearching" indeterminate class="mb-3" />
-
-          <div v-if="tmdbSearchResults.length > 0" class="tmdb-results mb-4" :style="{ maxHeight: smAndDown ? '40vh' : '280px' }">
-            <VList density="compact" class="pa-0">
-              <VListItem
-                v-for="result in tmdbSearchResults"
-                :key="result.id"
-                :active="selectedTmdbResult?.id === result.id"
-                color="primary"
-                rounded="lg"
-                class="mb-1"
-                @click="selectTmdbResult(result)"
-              >
-                <template #prepend>
-                  <VAvatar size="48" rounded="lg" class="me-2">
-                    <VImg v-if="result.poster_path" :src="getTmdbPosterUrl(result.poster_path)" cover />
-                    <VIcon v-else :icon="transferMediaType === 'movie' ? 'ri-film-fill' : 'ri-tv-2-fill'" size="24" />
-                  </VAvatar>
-                </template>
-                <VListItemTitle class="text-body-2 font-weight-medium">
-                  {{ result.title }}
-                </VListItemTitle>
-                <VListItemSubtitle class="text-caption">
-                  {{ result.release_date ? result.release_date.substring(0, 4) : '未知年份' }}
-                  <span v-if="result.original_title && result.original_title !== result.title" class="ms-2 text-medium-emphasis">
-                    {{ result.original_title }}
-                  </span>
-                </VListItemSubtitle>
-              </VListItem>
-            </VList>
-          </div>
-
-          <div v-else-if="!tmdbSearching && tmdbSearchResults.length === 0 && tmdbSearchInput.trim()" class="text-center text-body-2 text-medium-emphasis pa-4">
-            未找到匹配结果，请尝试其他关键词
-          </div>
-
-          <!-- 选中结果信息 -->
-          <VAlert v-if="selectedTmdbResult" color="info" variant="tonal" density="compact" :icon="false">
-            <div class="d-flex align-center flex-wrap ga-2">
-              <VIcon icon="$info" size="22" color="info" class="flex-shrink-0" />
-              <VAvatar v-if="selectedTmdbResult.poster_path" size="36" rounded="lg">
-                <VImg :src="getTmdbPosterUrl(selectedTmdbResult.poster_path)" cover />
-              </VAvatar>
-              <div>
-                <div class="text-body-2 font-weight-medium">
-                  {{ selectedTmdbResult.title }}
-                  <span v-if="selectedTmdbResult.release_date" class="text-medium-emphasis"> ({{ selectedTmdbResult.release_date.substring(0, 4) }})</span>
-                </div>
-                <div class="text-caption text-medium-emphasis">TMDB ID: {{ selectedTmdbResult.id }}</div>
-              </div>
-            </div>
-          </VAlert>
-        </VCardText>
-
-        <VDivider />
-
-        <VCardActions class="pa-4" :class="{ 'flex-column ga-2': smAndDown }">
-          <VSpacer v-if="!smAndDown" />
-          <VBtn variant="text" :block="smAndDown" @click="transferDialog = false">取消</VBtn>
-          <VBtn
-            color="warning"
-            :loading="transferring"
-            :disabled="!selectedTmdbResult"
-            :block="smAndDown"
-            @click="confirmTransfer"
-          >
-            <VIcon icon="ri-archive-line" size="16" class="me-1" />
-            确认归档
-          </VBtn>
-        </VCardActions>
-      </VCard>
-    </VDialog>
   </div>
 </template>
 
@@ -825,6 +676,24 @@ onMounted(() => {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+}
+
+.path-chip-clickable {
+  cursor: pointer;
+  transition: opacity 0.2s;
+
+  &:hover {
+    opacity: 0.8;
+  }
+}
+
+.mobile-path-box-clickable {
+  cursor: pointer;
+  transition: background 0.2s;
+
+  &:hover {
+    background: rgba(var(--v-theme-on-surface), 0.1) !important;
   }
 }
 
@@ -892,21 +761,4 @@ onMounted(() => {
   }
 }
 
-.tmdb-results {
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  border-radius: 8px;
-  overflow-y: auto;
-}
-
-.transfer-path-box {
-  background: rgba(var(--v-theme-on-surface), 0.05);
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  word-break: break-all;
-  display: flex;
-  align-items: flex-start;
-}
-
-.transfer-dialog-title {
-  min-height: 56px;
-}
 </style>

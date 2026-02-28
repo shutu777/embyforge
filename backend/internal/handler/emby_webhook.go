@@ -206,9 +206,7 @@ func extractFromMultipartBySniffing(body []byte) []byte {
 		return nil
 	}
 	boundary := string(bytes.TrimSpace(body[:idx]))
-	if strings.HasPrefix(boundary, "--") {
-		boundary = boundary[2:] // 去掉前缀 "--"
-	}
+	boundary = strings.TrimPrefix(boundary, "--")
 
 	reader := multipart.NewReader(bytes.NewReader(body), boundary)
 	for {

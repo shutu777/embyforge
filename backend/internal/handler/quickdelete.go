@@ -151,7 +151,7 @@ func isTmdbID(s string) bool {
 }
 
 // searchByTmdbID 通过 TMDB ID 搜索 Emby 媒体（电影和剧集都搜）
-func (h *QuickDeleteHandler) searchByTmdbID(ctx context.Context, client *emby.Client, tmdbID string, limit int) ([]emby.MediaItem, error) {
+func (h *QuickDeleteHandler) searchByTmdbID(_ context.Context, client *emby.Client, tmdbID string, limit int) ([]emby.MediaItem, error) {
 	baseURL := fmt.Sprintf("%s:%d", client.Host, client.Port)
 	url := fmt.Sprintf("%s/emby/Items?AnyProviderIdEquals=Tmdb.%s&IncludeItemTypes=Movie,Series&Recursive=true&Limit=%d&Fields=Path,ProviderIds,ChildCount,RecursiveItemCount,ProductionYear",
 		baseURL, tmdbID, limit)
@@ -195,10 +195,10 @@ func (h *QuickDeleteHandler) GetSeriesSeasons(c *gin.Context) {
 
 	// 构建季信息列表，获取每季的集数
 	type SeasonInfo struct {
-		ID            string `json:"id"`
-		Name          string `json:"name"`
-		SeasonNumber  int    `json:"season_number"`
-		EpisodeCount  int    `json:"episode_count"`
+		ID           string `json:"id"`
+		Name         string `json:"name"`
+		SeasonNumber int    `json:"season_number"`
+		EpisodeCount int    `json:"episode_count"`
 	}
 
 	result := make([]SeasonInfo, 0, len(seasons))

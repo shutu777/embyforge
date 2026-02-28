@@ -246,10 +246,10 @@ func main() {
 	{
 		public.POST("/auth/login", authHandler.Login)
 		// GitHub Webhook 公开端点（带速率限制）
-		public.POST("/webhook/github", 
+		public.POST("/webhook/github",
 			middleware.RateLimitMiddleware(webhookRateLimiter),
 			webhookHandler.HandleGitHubWebhook)
-		public.POST("/webhook/github/:id", 
+		public.POST("/webhook/github/:id",
 			middleware.RateLimitMiddleware(webhookRateLimiter),
 			webhookHandler.HandleGitHubWebhook)
 		// Emby Webhook 公开端点（带速率限制，每分钟最多 60 个请求）
@@ -317,9 +317,8 @@ func main() {
 		protected.POST("/symedia/refresh", symediaHandler.ManualRefresh)
 		protected.POST("/symedia/github-config-save", symediaHandler.SaveGithubConfigOnly)
 		protected.POST("/symedia/github-config", symediaHandler.SaveGithubConfig)
-		protected.POST("/symedia/transfer", symediaHandler.Transfer)
-		protected.POST("/symedia/transfer-config", symediaHandler.SaveTransferConfig)
-		protected.GET("/symedia/transfer-rules", symediaHandler.GetTransferRules)
+		protected.POST("/symedia/path-replace-config", symediaHandler.SavePathReplaceConfig)
+		protected.POST("/symedia/check-path", symediaHandler.CheckPath)
 
 		// TMDB 搜索
 		protected.GET("/tmdb/search", tmdbSearchHandler.SearchTmdb)

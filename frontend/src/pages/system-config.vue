@@ -31,10 +31,15 @@ async function fetchConfigs() {
   loading.value = true
   try {
     const { data } = await api.get('/system-config')
-    // 过滤掉 symedia 相关配置项（在 symedia-config 页面单独管理）
-    const symediaKeys = ['symedia_url', 'symedia_auth_token']
+    // 过滤掉其他页面已管理的配置项
+    const hiddenKeys = [
+      'symedia_url',
+      'symedia_auth_token',
+      'path_replace_clouddrive',
+      'path_replace_emby_strm',
+    ]
     configs.value = (data.data || [])
-      .filter(c => !symediaKeys.includes(c.key))
+      .filter(c => !hiddenKeys.includes(c.key) && !c.key.startsWith('symedia_transfer_'))
       .map(c => ({ ...c, editValue: c.value }))
   } catch (e) {
     snackbar.error('获取配置失败')

@@ -26,35 +26,12 @@ const githubSaveLoading = ref(false)
 const githubRefreshLoading = ref(false)
 const webhookUrl = ref('')
 
-// 归档方式选项
-const transferTypeOptions = [
-  { title: '复制', value: 'copy' },
-  { title: '移动', value: 'move' },
-  { title: '硬链接', value: 'link' },
-  { title: '软链接', value: 'softlink' },
-  { title: 'CloudDrive2 移动', value: 'cd2_move' },
-  { title: 'CloudDrive2 复制', value: 'cd2_copy' },
-]
-
-// 归档规则列表
-const transferRules = ref([])
-const transferRulesLoading = ref(false)
-
-// 归档配置表单状态（默认值参照 Symedia 页面）
-const transferForm = ref({
-  rule_id: '',
-  dest_dir: '',
-  transfer_type: 'cd2_move',
-  category: true,
-  delete_dir: false,
-  extract_metadata: true,
-  cache_metadata: true,
-  download_nfo: false,
-  download_image: false,
-  path_from: '',
-  path_to: '',
+// 路径替换配置
+const pathReplaceForm = ref({
+  clouddrivePath: '',
+  embyStrmPath: '',
 })
-const transferSaveLoading = ref(false)
+const pathReplaceSaveLoading = ref(false)
 
 // 页面加载状态
 const pageLoading = ref(false)
@@ -144,58 +121,17 @@ async function fetchConfigs() {
         webhookUrl.value = github.webhook_url || ''
       }
 
-      // 填充归档配置表单
-      if (data.data.transfer_config) {
-        const tc = data.data.transfer_config
-        transferForm.value.rule_id = tc.rule_id || ''
-        transferForm.value.dest_dir = tc.dest_dir || ''
-        transferForm.value.transfer_type = tc.transfer_type || 'cd2_move'
-        transferForm.value.category = tc.category !== undefined ? !!tc.category : true
-        transferForm.value.delete_dir = !!tc.delete_dir
-        transferForm.value.extract_metadata = tc.extract_metadata !== undefined ? !!tc.extract_metadata : true
-        transferForm.value.cache_metadata = tc.cache_metadata !== undefined ? !!tc.cache_metadata : true
-        transferForm.value.download_nfo = !!tc.download_nfo
-        transferForm.value.download_image = !!tc.download_image
-        transferForm.value.path_from = tc.path_from || ''
-        transferForm.value.path_to = tc.path_to || ''
+      // 填充路径替换配置
+      if (data.data.path_replace) {
+        const pr = data.data.path_replace
+        pathReplaceForm.value.clouddrivePath = pr.clouddrive_path || ''
+        pathReplaceForm.value.embyStrmPath = pr.emby_strm_path || ''
       }
     }
   } catch (e) {
     console.error('获取配置失败', e)
-    // 不显示错误提示，因为可能是首次访问
   } finally {
     pageLoading.value = false
-  }
-}
-
-// 获取 Symedia 归档规则列表
-async function fetchTransferRules() {
-  transferRulesLoading.value = true
-  try {
-    const { data } = await api.get('/symedia/transfer-rules')
-    if (data.data) {
-      transferRules.value = data.data
-      // 如果当前没有选中规则，默认选第一个
-      if (!transferForm.value.rule_id && data.data.length > 0) {
-        transferForm.value.rule_id = data.data[0].rule_id
-        // 目标目录为空时，用第一个规则的 dest_dir 填充
-        if (!transferForm.value.dest_dir) {
-          transferForm.value.dest_dir = data.data[0].dest_dir || ''
-        }
-      }
-    }
-  } catch (e) {
-    console.error('获取归档规则列表失败', e)
-  } finally {
-    transferRulesLoading.value = false
-  }
-}
-
-// 选择规则后自动填充目标目录
-function onRuleChange(ruleId) {
-  const rule = transferRules.value.find(r => r.rule_id === ruleId)
-  if (rule && rule.dest_dir) {
-    transferForm.value.dest_dir = rule.dest_dir
   }
 }
 
@@ -255,36 +191,21 @@ async function handleManualRefresh() {
   }
 }
 
-// 保存归档配置
-async function handleSaveTransferConfig() {
-  // 验证 rule_id 非空
-  if (!transferForm.value.rule_id) {
-    snackbar.error('请选择归档规则')
-    return
-  }
-
-  transferSaveLoading.value = true
+// 保存路径替换配置
+async function handleSavePathReplaceConfig() {
+  pathReplaceSaveLoading.value = true
   try {
-    await api.post('/symedia/transfer-config', {
-      rule_id: transferForm.value.rule_id,
-      dest_dir: transferForm.value.dest_dir,
-      transfer_type: transferForm.value.transfer_type,
-      category: transferForm.value.category,
-      delete_dir: transferForm.value.delete_dir,
-      extract_metadata: transferForm.value.extract_metadata,
-      cache_metadata: transferForm.value.cache_metadata,
-      download_nfo: transferForm.value.download_nfo,
-      download_image: transferForm.value.download_image,
-      path_from: transferForm.value.path_from,
-      path_to: transferForm.value.path_to,
+    await api.post('/symedia/path-replace-config', {
+      clouddrive_path: pathReplaceForm.value.clouddrivePath,
+      emby_strm_path: pathReplaceForm.value.embyStrmPath,
     })
-    snackbar.success('归档配置保存成功')
+    snackbar.success('路径替换配置保存成功')
   } catch (e) {
-    const errorMsg = handleApiError(e, '保存归档配置失败')
+    const errorMsg = handleApiError(e, '保存路径替换配置失败')
     snackbar.error(errorMsg)
-    console.error('保存归档配置失败:', e)
+    console.error('保存路径替换配置失败:', e)
   } finally {
-    transferSaveLoading.value = false
+    pathReplaceSaveLoading.value = false
   }
 }
 
@@ -365,7 +286,6 @@ async function copyWebhookUrl() {
 // 页面加载时获取配置
 onMounted(async () => {
   await fetchConfigs()
-  fetchTransferRules()
 })
 </script>
 
@@ -612,48 +532,43 @@ onMounted(async () => {
         </VCardText>
       </VCard>
 
-      <!-- 第三个卡片：归档配置 -->
+      <!-- 第三个卡片：路径替换 -->
       <VCard variant="flat" class="content-card" data-no-hover>
         <VCardText class="pa-6">
           <div class="d-flex align-center mb-5">
             <VAvatar color="warning" variant="tonal" size="42" rounded="lg" class="me-3">
-              <VIcon icon="ri-archive-line" size="22" />
+              <VIcon icon="ri-folder-transfer-line" size="22" />
             </VAvatar>
             <div>
-              <div class="text-h6 font-weight-semibold">归档配置</div>
+              <div class="text-h6 font-weight-semibold">路径替换</div>
               <div class="text-body-2 text-medium-emphasis">
-                预设 Symedia 手动归档的固定参数，归档时自动读取无需每次填写
+                配置 Emby Strm 路径与 CloudDrive 路径的映射关系，用于媒体库查询页面的路径显示转换
               </div>
             </div>
           </div>
 
           <VRow>
-            <VCol cols="12" md="4">
-              <VSelect
-                v-model="transferForm.rule_id"
-                label="归档规则"
-                :items="transferRules"
-                item-title="name"
-                item-value="rule_id"
-                :loading="transferRulesLoading"
-                :rules="requiredRules"
+            <VCol cols="12" md="6">
+              <VTextField
+                v-model="pathReplaceForm.clouddrivePath"
+                label="CloudDrive 路径"
+                placeholder="/CloudNAS/CloudDrive/115open/Symedia媒体库"
                 persistent-hint
-                hint="选择 Symedia 归档规则，自动填充目标目录"
-                @update:model-value="onRuleChange"
+                hint="CloudDrive 实际挂载的云盘路径前缀"
               >
                 <template #prepend-inner>
-                  <VIcon icon="ri-fingerprint-line" size="20" />
+                  <VIcon icon="ri-cloud-line" size="20" />
                 </template>
-              </VSelect>
+              </VTextField>
             </VCol>
 
-            <VCol cols="12" md="4">
+            <VCol cols="12" md="6">
               <VTextField
-                v-model="transferForm.dest_dir"
-                label="目标目录"
-                placeholder="/CloudNAS/CloudDrive/115open/影库"
+                v-model="pathReplaceForm.embyStrmPath"
+                label="Emby Strm 路径"
+                placeholder="/Media"
                 persistent-hint
-                hint="由所选规则自动填充，也可手动修改"
+                hint="Emby 媒体库中 Strm 文件的路径前缀"
               >
                 <template #prepend-inner>
                   <VIcon icon="ri-folder-line" size="20" />
@@ -661,127 +576,15 @@ onMounted(async () => {
               </VTextField>
             </VCol>
 
-            <VCol cols="12" md="4">
-              <VSelect
-                v-model="transferForm.transfer_type"
-                label="归档方式"
-                :items="transferTypeOptions"
-                item-title="title"
-                item-value="value"
-                persistent-hint
-                hint="文件传输方式"
-              >
-                <template #prepend-inner>
-                  <VIcon icon="ri-swap-line" size="20" />
-                </template>
-              </VSelect>
-            </VCol>
-
             <VCol cols="12">
-              <div class="text-subtitle-2 text-medium-emphasis mb-3">开关选项</div>
-              <VRow>
-                <VCol cols="12" sm="6" md="4">
-                  <VSwitch
-                    v-model="transferForm.category"
-                    label="按规则分类"
-                    color="warning"
-                    hide-details
-                    density="compact"
-                  />
-                </VCol>
-                <VCol cols="12" sm="6" md="4">
-                  <VSwitch
-                    v-model="transferForm.delete_dir"
-                    label="删除父文件夹"
-                    color="warning"
-                    hide-details
-                    density="compact"
-                  />
-                </VCol>
-                <VCol cols="12" sm="6" md="4">
-                  <VSwitch
-                    v-model="transferForm.extract_metadata"
-                    label="智能提取元数据"
-                    color="warning"
-                    hide-details
-                    density="compact"
-                  />
-                </VCol>
-                <VCol cols="12" sm="6" md="4">
-                  <VSwitch
-                    v-model="transferForm.cache_metadata"
-                    label="缓存元数据"
-                    color="warning"
-                    hide-details
-                    density="compact"
-                  />
-                </VCol>
-                <VCol cols="12" sm="6" md="4">
-                  <VSwitch
-                    v-model="transferForm.download_nfo"
-                    label="下载 NFO"
-                    color="warning"
-                    hide-details
-                    density="compact"
-                  />
-                </VCol>
-                <VCol cols="12" sm="6" md="4">
-                  <VSwitch
-                    v-model="transferForm.download_image"
-                    label="下载海报封面"
-                    color="warning"
-                    hide-details
-                    density="compact"
-                  />
-                </VCol>
-              </VRow>
-            </VCol>
-
-            <!-- 路径替换配置 -->
-            <VCol cols="12" class="mt-2">
-              <div class="text-subtitle-2 text-medium-emphasis mb-3">路径替换（可选）</div>
-              <div class="text-caption text-medium-emphasis mb-3">
-                Emby 路径前缀替换为云盘路径前缀，留空则使用 Symedia sync_list 自动映射
-              </div>
-              <VRow>
-                <VCol cols="12" md="6">
-                  <VTextField
-                    v-model="transferForm.path_from"
-                    label="Emby 路径前缀"
-                    placeholder="/video/Strm"
-                    persistent-hint
-                    hint="Emby 媒体库中的路径前缀（被替换的部分）"
-                  >
-                    <template #prepend-inner>
-                      <VIcon icon="ri-folder-transfer-line" size="20" />
-                    </template>
-                  </VTextField>
-                </VCol>
-                <VCol cols="12" md="6">
-                  <VTextField
-                    v-model="transferForm.path_to"
-                    label="云盘路径前缀"
-                    placeholder="/CloudNAS/CloudDrive/115open/Video"
-                    persistent-hint
-                    hint="SA 实际需要的云盘路径前缀（替换后的部分）"
-                  >
-                    <template #prepend-inner>
-                      <VIcon icon="ri-cloud-line" size="20" />
-                    </template>
-                  </VTextField>
-                </VCol>
-              </VRow>
-            </VCol>
-
-            <VCol cols="12" class="mt-2">
               <VBtn
                 color="warning"
-                :loading="transferSaveLoading"
-                :disabled="transferSaveLoading"
-                @click="handleSaveTransferConfig"
+                :loading="pathReplaceSaveLoading"
+                :disabled="pathReplaceSaveLoading"
+                @click="handleSavePathReplaceConfig"
               >
                 <VIcon icon="ri-save-line" class="me-1" />
-                保存归档配置
+                保存路径替换配置
               </VBtn>
             </VCol>
           </VRow>
