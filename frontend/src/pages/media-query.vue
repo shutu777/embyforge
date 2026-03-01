@@ -33,8 +33,8 @@ const deleting = ref(false)
 const pathReplaceConfig = ref({ clouddrive_path: '', emby_strm_path: '' })
 const { copy: clipboardCopy } = useClipboard({ legacy: true })
 
-// Symedia 检查加载状态（按 item ID 追踪）
-const symediaLoadingIds = ref(new Set())
+// Symedia URL（页面加载时从配置获取）
+const symediaUrl = ref('')
 
 function getHdhiveUrl(item) {
   if (!item?.TmdbId) return ''
@@ -201,36 +201,29 @@ function getFolderPath(itemPath) {
   return itemPath
 }
 
-// 点击 Symedia 按钮：检查路径是否存在，若存在则打开 Symedia 文件管理器
+// 点击 Symedia 按钮：复制路径到剪贴板并打开 Symedia 文件管理器
 async function onSymediaClick(item) {
   if (!item?.Path) {
     snackbar.error('该条目没有路径信息')
     return
   }
+  if (!symediaUrl.value) {
+    snackbar.error('请先配置 Symedia 服务地址')
+    return
+  }
   const folderPath = getFolderPath(item.Path)
   const replacedPath = getReplacedPath(folderPath)
-  const itemId = item.Id
-  symediaLoadingIds.value.add(itemId)
-  symediaLoadingIds.value = new Set(symediaLoadingIds.value)
+
+  // 复制路径到剪贴板
   try {
-    const { data } = await api.post('/symedia/check-path', { path: replacedPath })
-    if (data.exists) {
-      const symediaUrl = (data.symedia_url || '').replace(/\/+$/, '')
-      if (symediaUrl) {
-        // 复制路径到剪贴板，方便在 Symedia 文件管理器中粘贴导航
-        try { await clipboardCopy(replacedPath) } catch {}
-        snackbar.success('路径已复制，请在 Symedia 文件管理器搜索栏中粘贴')
-        window.open(symediaUrl + '/#/file_manager', '_blank')
-      }
-    } else {
-      snackbar.error('Symedia 中未找到该路径的文件')
-    }
-  } catch (e) {
-    snackbar.error('Symedia 检查失败: ' + (e.response?.data?.error || e.message))
-  } finally {
-    symediaLoadingIds.value.delete(itemId)
-    symediaLoadingIds.value = new Set(symediaLoadingIds.value)
+    await clipboardCopy(replacedPath)
+    snackbar.success('路径已复制，请在 Symedia 文件管理器搜索栏中粘贴')
+  } catch {
+    snackbar.error('复制路径失败')
   }
+
+  // 打开 Symedia 文件管理器
+  window.open(symediaUrl.value + '/#/file_manager', '_blank')
 }
 
 // 加载路径替换配置
@@ -239,6 +232,9 @@ async function fetchPathReplaceConfig() {
     const { data } = await api.get('/symedia/config')
     if (data.data?.path_replace) {
       pathReplaceConfig.value = data.data.path_replace
+    }
+    if (data.data?.symedia_url) {
+      symediaUrl.value = data.data.symedia_url.replace(/\/+$/, '')
     }
   } catch {
     // 忽略，首次可能未配置
@@ -415,7 +411,6 @@ onMounted(() => {
                     variant="text"
                     color="warning"
                     size="small"
-                    :loading="symediaLoadingIds.has(item.Id)"
                     @click.stop="onSymediaClick(item)"
                   >
                     <VIcon icon="ri-folder-open-line" size="16" class="me-1" />
@@ -539,7 +534,6 @@ onMounted(() => {
                     size="small"
                     density="compact"
                     block
-                    :loading="symediaLoadingIds.has(item.Id)"
                     @click.stop="onSymediaClick(item)"
                   >
                     <VIcon icon="ri-folder-open-line" size="14" class="me-1" />

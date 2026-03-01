@@ -3,10 +3,8 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -221,93 +219,6 @@ func (h *SymediaHandler) SavePathReplaceConfig(c *gin.Context) {
 
 	log.Printf("✅ [Symedia] 路径替换配置保存成功")
 	c.JSON(http.StatusOK, gin.H{"message": "路径替换配置保存成功"})
-}
-
-// CheckPathRequest 检查路径请求
-type CheckPathRequest struct {
-	Path string `json:"path" binding:"required"`
-}
-
-// CheckPath 检查 Symedia 路径是否存在文件
-// POST /api/symedia/check-path
-func (h *SymediaHandler) CheckPath(c *gin.Context) {
-	var req CheckPathRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数无效"})
-		return
-	}
-
-	// 读取 Symedia URL
-	var symediaUrlConfig model.SystemConfig
-	if err := h.DB.Where("key = ?", "symedia_url").First(&symediaUrlConfig).Error; err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请先配置 Symedia 服务地址"})
-		return
-	}
-
-	symediaUrl := strings.TrimSpace(symediaUrlConfig.Value)
-	if symediaUrl == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请先配置 Symedia 服务地址"})
-		return
-	}
-
-	// 读取 auth token
-	var authTokenConfig model.SystemConfig
-	if err := h.DB.Where("key = ?", "symedia_auth_token").First(&authTokenConfig).Error; err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请先配置 Symedia 认证令牌"})
-		return
-	}
-	authToken := strings.TrimSpace(authTokenConfig.Value)
-
-	// 构建 listfile API URL
-	apiUrl := strings.TrimRight(symediaUrl, "/") + "/api/v1/finder/listfile?path=" + url.QueryEscape(req.Path)
-
-	client := &http.Client{Timeout: 15 * time.Second}
-	httpReq, err := http.NewRequest("GET", apiUrl, nil)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "构建请求失败"})
-		return
-	}
-
-	// 设置认证头
-	if authToken != "" {
-		token := authToken
-		if !strings.HasPrefix(strings.ToLower(token), "bearer ") {
-			token = "Bearer " + token
-		}
-		httpReq.Header.Set("Authorization", token)
-	}
-
-	log.Printf("🔄 [Symedia] 检查路径: %s", req.Path)
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		log.Printf("❌ [Symedia] 检查路径请求失败: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "无法连接到 Symedia 服务"})
-		return
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取响应失败"})
-		return
-	}
-
-	// 判断返回是否为非空数组
-	var result []json.RawMessage
-	if err := json.Unmarshal(body, &result); err != nil || len(result) == 0 {
-		log.Printf("ℹ️  [Symedia] 路径为空: %s", req.Path)
-		c.JSON(http.StatusOK, gin.H{
-			"exists":      false,
-			"symedia_url": symediaUrl,
-		})
-		return
-	}
-
-	log.Printf("✅ [Symedia] 路径存在: %s", req.Path)
-	c.JSON(http.StatusOK, gin.H{
-		"exists":      true,
-		"symedia_url": symediaUrl,
-	})
 }
 
 // SaveConfigRequest 保存配置请求结构（不触发刷新）

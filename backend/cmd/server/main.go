@@ -318,7 +318,6 @@ func main() {
 		protected.POST("/symedia/github-config-save", symediaHandler.SaveGithubConfigOnly)
 		protected.POST("/symedia/github-config", symediaHandler.SaveGithubConfig)
 		protected.POST("/symedia/path-replace-config", symediaHandler.SavePathReplaceConfig)
-		protected.POST("/symedia/check-path", symediaHandler.CheckPath)
 
 		// TMDB 搜索
 		protected.GET("/tmdb/search", tmdbSearchHandler.SearchTmdb)
