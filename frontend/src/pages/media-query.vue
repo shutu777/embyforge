@@ -2,11 +2,13 @@
 import { ref, onMounted } from 'vue'
 import { useDisplay } from 'vuetify'
 import { useClipboard } from '@vueuse/core'
+import { useRouter } from 'vue-router'
 import api from '@/utils/api'
 import { useSnackbar } from '@/composables/useSnackbar'
 import { useEmbyUrl } from '@/composables/useEmbyUrl'
 
 const snackbar = useSnackbar()
+const router = useRouter()
 const { smAndDown } = useDisplay()
 const { detectEmbyUrl, embyImageUrl, embyWebUrl } = useEmbyUrl()
 
@@ -36,10 +38,14 @@ const { copy: clipboardCopy } = useClipboard({ legacy: true })
 // Symedia URL（页面加载时从配置获取）
 const symediaUrl = ref('')
 
-function getHdhiveUrl(item) {
-  if (!item?.TmdbId) return ''
+function goToHdhive(item) {
+  if (!item?.TmdbId) return
   const type = item.Type === 'Movie' ? 'movie' : 'tv'
-  return `https://hdhive.com/tmdb/${type}/${item.TmdbId}`
+  const name = item.Name || item.OriginalTitle || ''
+  router.push({
+    path: '/hdhive-search',
+    query: { tmdb_id: item.TmdbId, media_type: type, title: name },
+  })
 }
 
 async function doSearch() {
@@ -251,7 +257,7 @@ onMounted(() => {
   <div>
     <!-- 页面标题和说明 -->
     <div class="mb-6">
-      <h1 class="text-h4 font-weight-bold mb-2">媒体库查询</h1>
+      <h1 class="text-h4 font-weight-bold mb-2">Emby 搜索</h1>
       <p class="text-body-1 text-medium-emphasis">
         搜索 Emby 媒体库中的电影或剧集，快速定位并管理指定条目
       </p>
@@ -265,7 +271,7 @@ onMounted(() => {
             <VIcon icon="ri-search-line" size="22" />
           </VAvatar>
           <div>
-            <div class="text-body-1 font-weight-semibold">媒体库查询</div>
+            <div class="text-body-1 font-weight-semibold">Emby 搜索</div>
             <div class="text-body-2 text-medium-emphasis">搜索 Emby 媒体库，管理电影和剧集</div>
           </div>
         </div>
@@ -396,15 +402,12 @@ onMounted(() => {
                   </VBtn>
                   <VBtn
                     v-if="item.TmdbId"
-                    :href="getHdhiveUrl(item)"
-                    target="_blank"
-                    rel="noopener noreferrer"
                     variant="text"
                     color="secondary"
                     size="small"
-                    @click.stop
+                    @click.stop="goToHdhive(item)"
                   >
-                    <VIcon icon="ri-external-link-line" size="16" class="me-1" />
+                    <VIcon icon="ri-search-line" size="16" class="me-1" />
                     HDHive
                   </VBtn>
                   <VBtn
@@ -512,17 +515,14 @@ onMounted(() => {
                   </VBtn>
                   <VBtn
                     v-if="item.TmdbId"
-                    :href="getHdhiveUrl(item)"
-                    target="_blank"
-                    rel="noopener noreferrer"
                     variant="text"
                     color="secondary"
                     size="small"
                     density="compact"
                     block
-                    @click.stop
+                    @click.stop="goToHdhive(item)"
                   >
-                    <VIcon icon="ri-external-link-line" size="14" class="me-1" />
+                    <VIcon icon="ri-search-line" size="14" class="me-1" />
                     HDHive
                   </VBtn>
                 </div>

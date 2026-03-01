@@ -96,8 +96,11 @@ function openInTmdb(tmdbId) {
   window.open(`https://www.themoviedb.org/tv/${tmdbId}`, '_blank')
 }
 
-function openInHdhive(tmdbId) {
-  window.open(`https://hdhive.com/tmdb/tv/${tmdbId}`, '_blank', 'noopener,noreferrer')
+function openInHdhive(tmdbId, name) {
+  router.push({
+    path: '/hdhive-search',
+    query: { tmdb_id: tmdbId, media_type: 'tv', title: name || '' },
+  })
 }
 
 // Emby 地址探测（由 useEmbyUrl 全局管理）
@@ -337,7 +340,7 @@ onMounted(async () => {
         <!-- 统计卡片 -->
         <VRow class="mb-4 match-height">
           <VCol cols="6" sm="4">
-            <VCard class="stat-card">
+            <VCard class="stat-card" style="border-left: 3px solid #8b5cf6;">
               <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
                 <div class="stat-text-wrap">
                   <div class="text-body-2 text-medium-emphasis mb-1">异常节目数</div>
@@ -350,7 +353,7 @@ onMounted(async () => {
             </VCard>
           </VCol>
           <VCol cols="6" sm="4">
-            <VCard class="stat-card">
+            <VCard class="stat-card" style="border-left: 3px solid #6366f1;">
               <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
                 <div class="stat-text-wrap">
                   <div class="text-body-2 text-medium-emphasis mb-1">缓存条目</div>
@@ -363,7 +366,7 @@ onMounted(async () => {
             </VCard>
           </VCol>
           <VCol cols="12" sm="4">
-            <VCard class="stat-card">
+            <VCard class="stat-card" style="border-left: 3px solid #f59e0b;">
               <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
                 <div class="stat-text-wrap">
                   <div class="text-body-2 text-medium-emphasis mb-1">最后分析</div>
@@ -536,9 +539,9 @@ onMounted(async () => {
                       <VIcon icon="ri-movie-2-line" size="14" class="me-1" />
                       在 TMDB 中查看
                     </VBtn>
-                    <VBtn size="small" variant="text" color="secondary" @click.stop="openInHdhive(group.tmdb_id)">
+                    <VBtn size="small" variant="text" color="secondary" @click.stop="openInHdhive(group.tmdb_id, group.series_name)">
                       <VIcon icon="ri-external-link-line" size="14" class="me-1" />
-                      在 HDHive 中查看
+                      HDHive 搜索
                     </VBtn>
                     <VBtn size="small" variant="text" color="primary" @click.stop="openInEmby(group.emby_item_id)">
                       <VIcon icon="ri-external-link-line" size="14" class="me-1" />

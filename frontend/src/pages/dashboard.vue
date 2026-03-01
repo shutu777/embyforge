@@ -142,7 +142,7 @@ const anomalyChartSeries = computed(() => [{
       <!-- 第一行：统计卡片 -->
       <VRow class="mb-4 match-height">
         <VCol v-for="stat in statCards" :key="stat.key" cols="6" sm="6" md="3">
-          <VCard class="stat-card">
+          <VCard class="stat-card" :style="{ borderLeft: `3px solid ${stat.color}` }">
             <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
               <div class="stat-text-wrap">
                 <div class="text-body-2 text-medium-emphasis mb-1">{{ stat.label }}</div>
@@ -155,7 +155,7 @@ const anomalyChartSeries = computed(() => [{
           </VCard>
         </VCol>
         <VCol cols="6" sm="6" md="3">
-          <VCard class="stat-card">
+          <VCard class="stat-card" style="border-left: 3px solid #ef4444;">
             <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
               <div class="stat-text-wrap">
                 <div class="text-body-2 text-medium-emphasis mb-1">总异常数</div>
@@ -286,8 +286,8 @@ const anomalyChartSeries = computed(() => [{
                     <VIcon v-else icon="ri-play-circle-fill" size="18" />
                   </VAvatar>
                   <div class="flex-grow-1" style="min-width: 0;">
-                    <div class="text-body-2 text-truncate">{{ item.user }} 在 {{ item.device }} 上播放了 {{ item.media }}</div>
-                    <div class="text-caption text-medium-emphasis">{{ item.time }}</div>
+                    <div class="text-body-2 text-truncate font-weight-medium">{{ item.media }}</div>
+                    <div class="text-caption text-medium-emphasis text-truncate">{{ item.user }} · {{ item.device }} · {{ item.time }}</div>
                   </div>
                 </div>
               </template>
@@ -310,7 +310,7 @@ const anomalyChartSeries = computed(() => [{
                 type="area"
                 :options="mediaChartOptions"
                 :series="mediaChartSeries"
-                :height="280"
+                :height="340"
               />
             </VCardText>
           </VCard>
@@ -322,7 +322,7 @@ const anomalyChartSeries = computed(() => [{
                 type="area"
                 :options="anomalyChartOptions"
                 :series="anomalyChartSeries"
-                :height="280"
+                :height="340"
               />
             </VCardText>
           </VCard>

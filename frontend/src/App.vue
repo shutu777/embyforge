@@ -4,26 +4,15 @@ import { useSnackbar } from '@/composables/useSnackbar'
 
 const { show: snackbarShow, message: snackbarMessage, color: snackbarColor, timeout: snackbarTimeout, close: snackbarClose } = useSnackbar()
 
-if (import.meta.env.MODE !== 'production') {
-  console.log(`[${performance.now().toFixed(2)}ms] [App.vue] Script setup 执行`)
-}
-
 let timeoutId = null
 
 // 移除加载动画的函数
 const removeLoadingAnimation = () => {
   const loadingBg = document.getElementById('loading-bg')
   if (loadingBg) {
-    if (import.meta.env.MODE !== 'production') {
-      console.log(`[${performance.now().toFixed(2)}ms] [App.vue] 找到加载动画元素，开始淡出`)
-    }
     loadingBg.style.transition = 'opacity 0.3s ease-out'
     loadingBg.style.opacity = '0'
-    
     setTimeout(() => {
-      if (import.meta.env.MODE !== 'production') {
-        console.log(`[${performance.now().toFixed(2)}ms] [App.vue] 移除加载动画元素`)
-      }
       loadingBg.style.display = 'none'
     }, 300)
   }
@@ -31,9 +20,6 @@ const removeLoadingAnimation = () => {
 
 // 页面加载完成的处理函数
 const pageLoadedHandler = () => {
-  if (import.meta.env.MODE !== 'production') {
-    console.log(`[${performance.now().toFixed(2)}ms] [App.vue] 收到页面加载完成事件`)
-  }
   if (timeoutId) {
     clearTimeout(timeoutId)
     timeoutId = null
@@ -44,19 +30,9 @@ const pageLoadedHandler = () => {
 // 立即设置事件监听器（在 setup 阶段）
 window.addEventListener('page-loaded', pageLoadedHandler)
 
-// 监听页面加载完成事件
 onMounted(() => {
-  if (import.meta.env.MODE !== 'production') {
-    console.log(`[${performance.now().toFixed(2)}ms] [App.vue] onMounted 触发`)
-  }
-  
-  // 设置超时保护
-  timeoutId = setTimeout(() => {
-    if (import.meta.env.MODE !== 'production') {
-      console.warn(`[${performance.now().toFixed(2)}ms] [App.vue] 页面加载超时，强制移除加载动画`)
-    }
-    removeLoadingAnimation()
-  }, 5000) // 5 秒超时
+  // 超时保护：3秒内未收到加载完成事件则强制移除动画
+  timeoutId = setTimeout(removeLoadingAnimation, 3000)
 })
 
 onUnmounted(() => {
@@ -79,15 +55,16 @@ onUnmounted(() => {
       location="bottom end"
       rounded="lg"
       min-width="0"
+      max-width="420"
       class="global-snackbar"
     >
-      <div class="d-flex align-center gap-3 pa-1">
+      <div class="d-flex align-center ga-2">
         <VIcon
           :icon="snackbarColor === 'success' ? 'ri-checkbox-circle-line' : snackbarColor === 'error' ? 'ri-close-circle-line' : 'ri-information-line'"
-          size="32"
+          size="22"
           color="white"
         />
-        <span class="text-h5 font-weight-medium" style="color: white;">{{ snackbarMessage }}</span>
+        <span class="text-body-1 font-weight-medium" style="color: white;">{{ snackbarMessage }}</span>
       </div>
     </VSnackbar>
   </VApp>

@@ -31,9 +31,9 @@ func IsAuthError(err error) bool {
 
 // TVShowDetails TMDB 电视节目详情
 type TVShowDetails struct {
-	ID       int      `json:"id"`
-	Name     string   `json:"name"`
-	Seasons  []Season `json:"seasons"`
+	ID      int      `json:"id"`
+	Name    string   `json:"name"`
+	Seasons []Season `json:"seasons"`
 }
 
 // Season TMDB 季信息
@@ -238,6 +238,42 @@ func (c *Client) GetTVShowDetailsWithContext(ctx context.Context, tmdbID int) (*
 	return &details, nil
 }
 
+// TmdbDetailResult TMDB 详情结果（电影和剧集通用）
+type TmdbDetailResult struct {
+	ID            int     `json:"id"`
+	Title         string  `json:"title,omitempty"`
+	Name          string  `json:"name,omitempty"`
+	OriginalTitle string  `json:"original_title,omitempty"`
+	OriginalName  string  `json:"original_name,omitempty"`
+	Overview      string  `json:"overview"`
+	PosterPath    string  `json:"poster_path"`
+	BackdropPath  string  `json:"backdrop_path"`
+	VoteAverage   float64 `json:"vote_average"`
+	VoteCount     int     `json:"vote_count"`
+	ReleaseDate   string  `json:"release_date,omitempty"`
+	FirstAirDate  string  `json:"first_air_date,omitempty"`
+}
+
+// GetDetail 获取 TMDB 详情（电影或剧集）
+func (c *Client) GetDetail(tmdbID int, mediaType, language string) (*TmdbDetailResult, error) {
+	path := fmt.Sprintf("/3/%s/%d", mediaType, tmdbID)
+	if language != "" {
+		path += "&language=" + url.QueryEscape(language)
+	}
+
+	body, err := c.doRequest(path)
+	if err != nil {
+		return nil, fmt.Errorf("获取TMDB详情失败 (ID=%d): %w", tmdbID, err)
+	}
+
+	var result TmdbDetailResult
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("解析TMDB详情失败 (ID=%d): %w", tmdbID, err)
+	}
+
+	return &result, nil
+}
+
 // TmdbSearchResult TMDB 搜索结果项（统一格式，电影和剧集共用）
 type TmdbSearchResult struct {
 	ID            int    `json:"id"`
@@ -260,28 +296,28 @@ type TmdbSearchRawMovie struct {
 
 // TmdbSearchRawTV TMDB 剧集搜索原始结果项
 type TmdbSearchRawTV struct {
-	ID               int    `json:"id"`
-	Name             string `json:"name"`
-	OriginalName     string `json:"original_name"`
-	FirstAirDate     string `json:"first_air_date"`
-	PosterPath       string `json:"poster_path"`
-	Overview         string `json:"overview"`
+	ID           int    `json:"id"`
+	Name         string `json:"name"`
+	OriginalName string `json:"original_name"`
+	FirstAirDate string `json:"first_air_date"`
+	PosterPath   string `json:"poster_path"`
+	Overview     string `json:"overview"`
 }
 
 // TmdbSearchResponse TMDB 搜索 API 原始响应（电影）
 type TmdbSearchMovieResponse struct {
-	Page         int                   `json:"page"`
-	Results      []TmdbSearchRawMovie  `json:"results"`
-	TotalResults int                   `json:"total_results"`
-	TotalPages   int                   `json:"total_pages"`
+	Page         int                  `json:"page"`
+	Results      []TmdbSearchRawMovie `json:"results"`
+	TotalResults int                  `json:"total_results"`
+	TotalPages   int                  `json:"total_pages"`
 }
 
 // TmdbSearchTVResponse TMDB 搜索 API 原始响应（剧集）
 type TmdbSearchTVResponse struct {
-	Page         int                `json:"page"`
-	Results      []TmdbSearchRawTV  `json:"results"`
-	TotalResults int                `json:"total_results"`
-	TotalPages   int                `json:"total_pages"`
+	Page         int               `json:"page"`
+	Results      []TmdbSearchRawTV `json:"results"`
+	TotalResults int               `json:"total_results"`
+	TotalPages   int               `json:"total_pages"`
 }
 
 // BuildSearchURL 构建 TMDB 搜索 URL 路径（含查询参数，不含 BaseURL 和 api_key）

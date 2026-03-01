@@ -57,6 +57,13 @@ const { t } = useI18n()
       to: '/media-query',
     }"
   />
+  <VerticalNavLink
+    :item="{
+      title: t('menu.hdhiveSearch'),
+      icon: 'ri-fire-line',
+      to: '/hdhive-search',
+    }"
+  />
 
   <!-- 👉 缓存管理 -->
   <VerticalNavSectionTitle
@@ -111,6 +118,20 @@ const { t } = useI18n()
       title: t('menu.embyConfig'),
       icon: 'ri-settings-3-line',
       to: '/emby-config',
+    }"
+  />
+  <VerticalNavLink
+    :item="{
+      title: t('menu.hdhiveConfig'),
+      icon: 'ri-fire-line',
+      to: '/hdhive-config',
+    }"
+  />
+  <VerticalNavLink
+    :item="{
+      title: t('menu.pan115Config'),
+      icon: 'ri-cloud-line',
+      to: '/pan115-config',
     }"
   />
   <VerticalNavLink

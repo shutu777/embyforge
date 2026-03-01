@@ -147,7 +147,7 @@ async function changePassword() {
     <VRow v-else>
       <!-- 左侧：头像 -->
       <VCol cols="12" md="4">
-        <VCard data-no-hover>
+        <VCard variant="flat" class="content-card" data-no-hover>
           <VCardText class="d-flex flex-column align-center pa-8">
             <VAvatar size="120" class="mb-4">
               <VImg v-if="avatarPreview" :src="avatarPreview" cover />
@@ -195,7 +195,7 @@ async function changePassword() {
       <!-- 右侧：账号设置 -->
       <VCol cols="12" md="8">
         <!-- 修改用户名 -->
-        <VCard class="mb-4" data-no-hover>
+        <VCard variant="flat" class="content-card mb-4" data-no-hover>
           <VCardTitle class="text-body-1 font-weight-semibold pa-4 pb-2">
             修改用户名
           </VCardTitle>
@@ -225,7 +225,7 @@ async function changePassword() {
         </VCard>
 
         <!-- 修改密码 -->
-        <VCard data-no-hover>
+        <VCard variant="flat" class="content-card" data-no-hover>
           <VCardTitle class="text-body-1 font-weight-semibold pa-4 pb-2">
             修改密码
           </VCardTitle>

@@ -227,11 +227,13 @@ func main() {
 	embyCacheHandler := handler.NewEmbyCacheHandler(db)
 	quickDeleteHandler := handler.NewQuickDeleteHandler(db)
 	tmdbSearchHandler := handler.NewTmdbSearchHandler(db)
+	hdhiveHandler := handler.NewHDHiveHandler(db)
+	pan115Handler := handler.NewPan115Handler(db)
 
 	// 初始化 Gin 引擎
 	r := gin.New()
 	r.Use(gin.Recovery())
-	r.Use(ginLogger(accessLog, logBuffer))
+	r.Use(ginLogger(accessLog))
 
 	// 确保上传目录存在（在 Docker 中由 Nginx 提供静态文件服务）
 	uploadsDir := filepath.Join(filepath.Dir(cfg.DBPath), "uploads")
@@ -337,6 +339,17 @@ func main() {
 		protected.GET("/media-query/search", quickDeleteHandler.SearchEmbyMedia)
 		protected.GET("/media-query/seasons/:seriesId", quickDeleteHandler.GetSeriesSeasons)
 		protected.POST("/media-query/delete", quickDeleteHandler.DeleteMedia)
+
+		// HDHive
+		protected.POST("/hdhive/login", hdhiveHandler.Login)
+		protected.GET("/hdhive/search", hdhiveHandler.Search)
+		protected.GET("/hdhive/tmdb-info", hdhiveHandler.GetTmdbInfo)
+		protected.GET("/hdhive/detail", hdhiveHandler.GetDetail)
+		protected.POST("/hdhive/unlock", hdhiveHandler.UnlockResource)
+
+		// 115 网盘
+		protected.POST("/pan115/test-cookie", pan115Handler.TestCookie)
+		protected.POST("/pan115/transfer", pan115Handler.Transfer)
 	}
 
 	// 启动服务
@@ -348,8 +361,8 @@ func main() {
 	}
 }
 
-// ginLogger 请求日志中间件，写入文件和日志缓冲区
-func ginLogger(accessLog *accessLogger, logBuffer *handler.LogBuffer) gin.HandlerFunc {
+// ginLogger 请求日志中间件，仅写入文件，不写入实时日志缓冲区
+func ginLogger(accessLog *accessLogger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		c.Next()
@@ -358,39 +371,20 @@ func ginLogger(accessLog *accessLogger, logBuffer *handler.LogBuffer) gin.Handle
 		status := c.Writer.Status()
 
 		icon := "✅"
-		level := "INFO"
 		if status >= 400 {
 			icon = "⚠️"
-			level = "WARNING"
 		}
 		if status >= 500 {
 			icon = "❌"
-			level = "ERROR"
 		}
 
 		msg := fmt.Sprintf("%s %d | %s | %s %s",
 			icon, status, duration.Round(time.Millisecond),
 			c.Request.Method, c.Request.URL.Path)
 
-		// 写入文件
+		// 仅写入日志文件，不写入实时日志缓冲区
 		if accessLog != nil {
 			accessLog.write(msg)
 		}
-
-		// 写入内存缓冲区（过滤掉高频 GET 请求，避免刷屏）
-		// 只过滤成功的 GET 请求，非 200 的仍然显示
-		if !shouldHideFromRealtimeLog(c.Request.Method, c.Request.URL.Path, status) {
-			logBuffer.Add(level, msg)
-		}
 	}
-}
-
-// shouldHideFromRealtimeLog 判断请求是否应从实时日志面板中隐藏
-// 隐藏所有成功的 GET 请求（这些都是前端页面加载和状态查询，信息价值低）
-// POST/PUT/DELETE 和所有错误请求始终显示
-func shouldHideFromRealtimeLog(method, path string, status int) bool {
-	if method == "GET" && status < 400 {
-		return true
-	}
-	return false
 }

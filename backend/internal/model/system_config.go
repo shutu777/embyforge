@@ -21,6 +21,9 @@ type SystemConfig struct {
 // 需要加密的配置键列表
 var encryptedKeys = map[string]bool{
 	"symedia_auth_token": true,
+	"hdhive_password":    true,
+	"hdhive_token":       true,
+	"hdhive_cookie":      true,
 }
 
 // BeforeSave GORM钩子：保存前加密敏感字段

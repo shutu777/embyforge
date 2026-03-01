@@ -50,6 +50,11 @@ export const routes = [
         component: () => import('@/pages/media-query.vue'),
       },
       {
+        path: 'hdhive-search',
+        name: 'hdhive-search',
+        component: () => import('@/pages/hdhive-search.vue'),
+      },
+      {
         path: 'system-config',
         name: 'system-config',
         component: () => import('@/pages/system-config.vue'),
@@ -58,6 +63,16 @@ export const routes = [
         path: 'symedia-config',
         name: 'symedia-config',
         component: () => import('@/pages/symedia-config.vue'),
+      },
+      {
+        path: 'hdhive-config',
+        name: 'hdhive-config',
+        component: () => import('@/pages/hdhive-config.vue'),
+      },
+      {
+        path: 'pan115-config',
+        name: 'pan115-config',
+        component: () => import('@/pages/pan115-config.vue'),
       },
       {
         path: 'rendering-words',

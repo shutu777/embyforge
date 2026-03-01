@@ -130,7 +130,7 @@ onMounted(async () => { await Promise.all([fetchList(), fetchCacheStatus()]) })
     <!-- 统计卡片 -->
     <VRow class="mb-4 match-height">
       <VCol cols="6" sm="4">
-        <VCard class="stat-card">
+        <VCard class="stat-card" style="border-left: 3px solid #6366f1;">
           <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
             <div class="stat-text-wrap">
               <div class="text-body-2 text-medium-emphasis mb-1">缓存节目数</div>
@@ -143,7 +143,7 @@ onMounted(async () => { await Promise.all([fetchList(), fetchCacheStatus()]) })
         </VCard>
       </VCol>
       <VCol cols="6" sm="4">
-        <VCard class="stat-card">
+        <VCard class="stat-card" style="border-left: 3px solid #8b5cf6;">
           <VCardText class="d-flex align-center justify-space-between h-100 pa-5 stat-card-text">
             <div class="stat-text-wrap">
               <div class="text-body-2 text-medium-emphasis mb-1">缓存记录数</div>

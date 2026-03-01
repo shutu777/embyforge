@@ -2,14 +2,14 @@
 FROM node:20-alpine AS frontend-builder
 WORKDIR /app/frontend
 
-# 先复制依赖文件，利用 Docker 层缓存（依赖不变时跳过 npm install）
-COPY frontend/package.json frontend/package-lock.json* ./
+# 先复制依赖文件，利用 Docker 层缓存（依赖不变时跳过 install）
+COPY frontend/package.json frontend/yarn.lock* frontend/package-lock.json* ./
 RUN npm config set registry https://registry.npmmirror.com && \
     npm install --legacy-peer-deps --ignore-scripts
 
-# 再复制源码并构建
+# 复制源码并构建（图标已用 Iconify Vue 按需加载，无需 build:icons）
 COPY frontend/ .
-RUN npm run build:icons && npm run build
+RUN npm run build
 
 # 阶段2：构建后端
 FROM golang:1.23-alpine AS backend-builder

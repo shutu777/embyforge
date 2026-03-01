@@ -25,7 +25,9 @@
     .nav-header {
       overflow: hidden;
       padding: variables.$vertical-nav-header-padding;
+      margin-block-start: 1.5rem;
       margin-inline: variables.$vertical-nav-header-inline-spacing;
+      margin-block-end: 0.5rem;
       min-block-size: variables.$vertical-nav-header-height;
 
       // TEMPLATE: Check if we need to move this to master

@@ -90,7 +90,17 @@ async function testConnection() {
     </div>
 
     <VCard variant="flat" class="content-card" data-no-hover>
-      <VCardText class="pa-5">
+      <VCardText class="pa-6">
+        <div class="d-flex align-center mb-5">
+          <VAvatar color="primary" variant="tonal" size="42" rounded="lg" class="me-3">
+            <VIcon icon="ri-server-line" size="22" />
+          </VAvatar>
+          <div>
+            <div class="text-body-1 font-weight-semibold">Emby 服务器设置</div>
+            <div class="text-body-2 text-medium-emphasis">配置服务器地址、API Key 和用户认证信息</div>
+          </div>
+        </div>
+
         <VForm @submit.prevent="saveConfig">
           <VRow>
             <VCol cols="12" md="8">

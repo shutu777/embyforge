@@ -8,8 +8,7 @@
     "build": "vite build",
     "preview": "vite preview --port 5050",
     "lint": "eslint . -c .eslintrc.cjs --fix --ext .ts,.js,.cjs,.vue,.tsx,.jsx",
-    "build:icons": "tsx src/plugins/iconify/build-icons.js",
-    "postinstall": "npm run build:icons"
+    "build:icons": "tsx src/plugins/iconify/build-icons.js"
   },
   "dependencies": {
     "@floating-ui/dom": "1.6.8",

@@ -46,7 +46,7 @@ const props = defineProps({
       cursor: pointer;
       justify-content: flex-start !important;
       width: 100% !important;
-      padding-inline-start: 1.5rem !important;
+      padding-inline-start: 2rem !important;
     }
   }
 }

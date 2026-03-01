@@ -45,10 +45,7 @@ class PerformanceMonitor {
       } else if (onFID) {
         onFID(metric => this.handleMetric('FID', metric))
       }
-    }).catch(err => {
-      if (import.meta.env.MODE !== 'production') {
-        console.warn('[Performance] web-vitals 加载失败，使用降级方案:', err)
-      }
+    }).catch(() => {
       this.useFallbackMeasurement()
     })
   }
@@ -59,25 +56,8 @@ class PerformanceMonitor {
    * @param {object} metric - 指标对象
    */
   handleMetric(name, metric) {
-    const value = metric.value
-
-    this.metrics[name] = value
-
-    if (import.meta.env.MODE !== 'production') {
-      console.log(`[Performance] ${name}: ${value.toFixed(2)}${name === 'CLS' ? '' : 'ms'}`)
-    }
-
-    // 检查是否超过阈值
-    if (this.thresholds[name] && value > this.thresholds[name]) {
-      if (import.meta.env.MODE !== 'production') {
-        console.warn(
-          `[Performance Warning] ${name} (${value.toFixed(2)}) exceeds threshold (${this.thresholds[name]})`,
-        )
-      }
-    }
-
-    // 上报数据（可选）
-    this.reportMetric(name, value)
+    this.metrics[name] = metric.value
+    this.reportMetric(name, metric.value)
   }
 
   /**
@@ -94,7 +74,7 @@ class PerformanceMonitor {
 
       const measure = performance.getEntriesByName('vue-init')[0]
       if (measure) {
-        this.handleMetric('VueInit', { value: measure.duration })
+        this.metrics.VueInit = measure.duration
       }
     })
   }
@@ -111,9 +91,8 @@ class PerformanceMonitor {
       const resourceObserver = new PerformanceObserver(list => {
         list.getEntries().forEach(entry => {
           if (entry.duration > 1000) {
-            if (import.meta.env.MODE !== 'production') {
-              console.warn(`[Performance] Slow resource: ${entry.name} (${entry.duration.toFixed(2)}ms)`)
-            }
+            this.metrics.slowResources = this.metrics.slowResources || []
+            this.metrics.slowResources.push({ name: entry.name, duration: entry.duration })
           }
         })
       })
@@ -124,9 +103,7 @@ class PerformanceMonitor {
       try {
         const longTaskObserver = new PerformanceObserver(list => {
           list.getEntries().forEach(entry => {
-            if (import.meta.env.MODE !== 'production') {
-              console.warn(`[Performance] Long task detected: ${entry.duration.toFixed(2)}ms`)
-            }
+            this.metrics.longTasks = (this.metrics.longTasks || 0) + 1
           })
         })
 
@@ -134,15 +111,10 @@ class PerformanceMonitor {
       }
       catch (e) {
         // longtask 可能不被支持
-        if (import.meta.env.MODE !== 'production') {
-          console.debug('[Performance] longtask observer not supported')
-        }
       }
     }
     catch (error) {
-      if (import.meta.env.MODE !== 'production') {
-        console.warn('[Performance] PerformanceObserver setup failed:', error)
-      }
+      // PerformanceObserver 不被支持
     }
   }
 
@@ -253,9 +225,6 @@ class PerformanceMonitor {
       const navigation = performance.getEntriesByType('navigation')[0]
       if (navigation) {
         this.metrics.loadTime = navigation.loadEventEnd - navigation.fetchStart
-        if (import.meta.env.MODE !== 'production') {
-          console.log('[Performance] Fallback load time:', this.metrics.loadTime)
-        }
       }
     })
   }

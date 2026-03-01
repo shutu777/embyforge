@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8" />
-  <link rel="icon" href="/favicon.ico" />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='32' y2='32' gradientUnits='userSpaceOnUse'%3E%3Cstop offset='0%25' stop-color='%2393c5fd'/%3E%3Cstop offset='30%25' stop-color='%233b82f6'/%3E%3Cstop offset='70%25' stop-color='%236366f1'/%3E%3Cstop offset='100%25' stop-color='%234338ca'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='7' fill='url(%23g)'/%3E%3Cg transform='translate(4,4)'%3E%3Cpath d='M11.041 0c-.007 0-1.456 1.43-3.219 3.176L4.615 6.352l.512.513.512.512-2.819 2.791L0 12.961l1.83 1.848c1.006 1.016 2.438 2.46 3.182 3.209l1.351 1.359.508-.496c.28-.273.515-.498.524-.498.008 0 1.266 1.264 2.794 2.808L12.97 24l.187-.182c.23-.225 5.007-4.95 5.717-5.656l.52-.516-.502-.513c-.276-.282-.5-.52-.496-.53.003-.009 1.264-1.26 2.802-2.783 1.538-1.522 2.8-2.776 2.803-2.785.005-.012-3.617-3.684-6.107-6.193L17.65 4.6l-.505.505c-.279.278-.517.501-.53.497-.013-.005-1.27-1.267-2.793-2.805A449.655 449.655 0 0011.041 0zM9.223 7.367c.091.038 7.951 4.608 7.957 4.627.003.013-1.781 1.056-3.965 2.32a999.898 999.898 0 01-3.996 2.307c-.019.006-.026-1.266-.026-4.629 0-3.7.007-4.634.03-4.625Z' fill='white'/%3E%3C/g%3E%3C/svg%3E" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>EmbyForge</title>
 
@@ -48,20 +48,19 @@
   <div id="app">
     <div id="loading-bg">
       <div class="loading-logo">
-        <!-- SVG Logo -->
-        <svg width="86" height="48" viewBox="0 0 30 24" xmlns="http://www.w3.org/2000/svg">
-          <g fill="none" fill-rule="evenodd">
-            <path d="M30 21.392a2 2 0 0 1-3.027 1.716l-3.258-1.95a2 2 0 0 1-.973-1.716l-.001-6.7L15
-                17.178l-7.742-4.434v6.7a2 2 0 0 1-.973 1.715l-3.258 1.95A2 2 0 0 1 0 21.392V3.585l.005-.15L0 3.572a2 2 0 0
-                1 3.045-1.706L15 9.194l11.955-7.328A2 2 0 0 1 30 3.572Z" fill="var(--initial-loader-color)" />
-            <path fill="var(--initial-loader-color)" opacity=".078" d="m0 8.589 7.258 4.162v4.08z" />
-            <path fill="var(--initial-loader-color)" opacity=".078" d=" m0 8.589 7.258 4.056v2.492zm30 0-7.258
-                4.153v4.212z" />
-            <path fill="var(--initial-loader-color)" opacity=".078" d="m30 8.589-7.258 4.052v2.62z" />
-            <path d="M3.045 1.866 15 9.194v7.983L0 8.587V3.571a2 2 0 0 1 3.045-1.706Z" fill-opacity=".15" fill="
-                #FFF" />
-            <path d="M26.955 1.866 15 9.194v7.983l15-8.59V3.571a2 2 0 0 0-3.045-1.706Z" fill-opacity=".35"
-              fill="#FFF" />
+        <!-- EmbyForge Logo -->
+        <svg width="56" height="56" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="loaderBg" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stop-color="#93c5fd"/>
+              <stop offset="30%" stop-color="#3b82f6"/>
+              <stop offset="70%" stop-color="#6366f1"/>
+              <stop offset="100%" stop-color="#4338ca"/>
+            </linearGradient>
+          </defs>
+          <rect width="32" height="32" rx="7" fill="url(#loaderBg)"/>
+          <g transform="translate(4,4)">
+            <path d="M11.041 0c-.007 0-1.456 1.43-3.219 3.176L4.615 6.352l.512.513.512.512-2.819 2.791L0 12.961l1.83 1.848c1.006 1.016 2.438 2.46 3.182 3.209l1.351 1.359.508-.496c.28-.273.515-.498.524-.498.008 0 1.266 1.264 2.794 2.808L12.97 24l.187-.182c.23-.225 5.007-4.95 5.717-5.656l.52-.516-.502-.513c-.276-.282-.5-.52-.496-.53.003-.009 1.264-1.26 2.802-2.783 1.538-1.522 2.8-2.776 2.803-2.785.005-.012-3.617-3.684-6.107-6.193L17.65 4.6l-.505.505c-.279.278-.517.501-.53.497-.013-.005-1.27-1.267-2.793-2.805A449.655 449.655 0 0011.041 0zM9.223 7.367c.091.038 7.951 4.608 7.957 4.627.003.013-1.781 1.056-3.965 2.32a999.898 999.898 0 01-3.996 2.307c-.019.006-.026-1.266-.026-4.629 0-3.7.007-4.634.03-4.625Z" fill="white"/>
           </g>
         </svg>
       </div>
@@ -74,11 +73,6 @@
   </div>
   <script type="module" src="/src/main.js"></script>
   <script>
-    console.log('[index.html] 脚本开始执行')
-
-    const startTime = performance.now()
-    console.log(`[${performance.now().toFixed(2)}ms] [index.html] 脚本开始执行`)
-
     // 获取主题模式
     const isDark = localStorage.getItem('materio-theme') === 'dark'
 
@@ -92,18 +86,6 @@
 
     // 同时设置 body 背景色，避免白屏
     document.body.style.backgroundColor = loaderColor
-
-    console.log(`[${performance.now().toFixed(2)}ms] [index.html] 背景色设置完成: ${loaderColor}`)
-
-    // 监听 DOMContentLoaded 事件
-    document.addEventListener('DOMContentLoaded', () => {
-      console.log(`[${performance.now().toFixed(2)}ms] [index.html] DOMContentLoaded 触发`)
-    })
-
-    // 监听 load 事件
-    window.addEventListener('load', () => {
-      console.log(`[${performance.now().toFixed(2)}ms] [index.html] window.load 触发`)
-    })
   </script>
 </body>
 

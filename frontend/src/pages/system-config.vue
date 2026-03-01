@@ -31,15 +31,11 @@ async function fetchConfigs() {
   loading.value = true
   try {
     const { data } = await api.get('/system-config')
-    // 过滤掉其他页面已管理的配置项
-    const hiddenKeys = [
-      'symedia_url',
-      'symedia_auth_token',
-      'path_replace_clouddrive',
-      'path_replace_emby_strm',
-    ]
+    // 只显示 TMDB 和 Cron 相关配置项
+    const visiblePrefixes = ['tmdb_', 'cron_']
+    const visibleExactKeys = ['jwt_secret']
     configs.value = (data.data || [])
-      .filter(c => !hiddenKeys.includes(c.key) && !c.key.startsWith('symedia_transfer_'))
+      .filter(c => visibleExactKeys.includes(c.key) || visiblePrefixes.some(p => c.key.startsWith(p)))
       .map(c => ({ ...c, editValue: c.value }))
   } catch (e) {
     snackbar.error('获取配置失败')
@@ -79,6 +75,16 @@ async function saveConfig(config) {
 
     <VCard variant="flat" class="content-card" data-no-hover>
       <VCardText class="pa-5">
+        <div class="d-flex align-center mb-5">
+          <VAvatar color="info" variant="tonal" size="42" rounded="lg" class="me-3">
+            <VIcon icon="ri-settings-3-line" size="22" />
+          </VAvatar>
+          <div>
+            <div class="text-body-1 font-weight-semibold">全局参数配置</div>
+            <div class="text-body-2 text-medium-emphasis">管理 TMDB API 密钥、定时任务等系统参数</div>
+          </div>
+        </div>
+
         <!-- 加载状态 -->
         <div v-if="loading" class="d-flex justify-center py-6">
           <VProgressCircular indeterminate color="primary" />
